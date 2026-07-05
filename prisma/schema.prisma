@@ -1,0 +1,205 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id            String             @id @default(uuid())
+  email         String             @unique
+  passwordHash  String
+  name          String?
+  balance       Float              @default(1000000.0) // Starting paper balance: ₹10,00,000
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  
+  credentials        Credentials?
+  watchlist          Watchlist[]
+  orders             Order[]
+  holdings           Holding[]
+  portfolioLogs      PortfolioHistory[]
+  paperAccount       PaperAccount?
+  paperOrders        PaperOrder[]
+  paperPositions     PaperPosition[]
+  paperTrades        PaperTrade[]
+  paperHoldings      PaperHolding[]
+  paperTransactions  PaperTransaction[]
+}
+
+model Credentials {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientCode   String   // Angel One Client ID
+  password     String   // Encrypted Angel One password
+  apiKey       String   // SmartAPI developer API key
+  totpSecret   String   // Secret key for generating TOTP tokens
+  updatedAt    DateTime @updatedAt
+}
+
+model Watchlist {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol       String   // e.g. "RELIANCE-EQ"
+  token        String   // SmartAPI instrument token
+  exchange     String   // e.g. "NSE", "BSE"
+  group        String   @default("Default") // Watchlist tab/group name
+  addedAt      DateTime @default(now())
+
+  @@unique([userId, token, exchange, group])
+}
+
+model Holding {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol       String   // e.g. "INFY-EQ"
+  token        String   // SmartAPI instrument token
+  exchange     String   // e.g. "NSE"
+  quantity     Int      // Number of shares held
+  averagePrice Float    // Average buy price
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, token, exchange])
+}
+
+model Order {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol          String
+  token           String
+  exchange        String    // "NSE" or "BSE"
+  quantity        Int
+  price           Float     // Requested limit price or 0 for Market order
+  orderType       String    // "MARKET", "LIMIT", "SL" (Stop-Loss)
+  transactionType String    // "BUY" or "SELL"
+  productType     String    // "INTRADAY", "DELIVERY"
+  status          String    // "PENDING", "COMPLETED", "CANCELLED", "REJECTED"
+  rejectReason    String?
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+}
+
+model PortfolioHistory {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timestamp    DateTime @default(now())
+  totalValue   Float    // Holdings Value + Cash Balance
+  cashBalance  Float
+}
+
+model Instrument {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  symbol    String
+  name      String
+  expiry    String?
+  strike    String?
+  lotsize   String?
+  exchSeg   String   // Exchange Segment (e.g., "nse_cm", "nse_fo", "bse_cm")
+  tickSize  String?
+}
+
+// ─── Paper Trading Models ─────────────────────────────────────────────────────
+
+model PaperAccount {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance           Float    @default(1000000.0) // ₹10,00,000 starting
+  usedMargin        Float    @default(0.0)
+  availableBalance  Float    @default(1000000.0)
+  totalPnl          Float    @default(0.0)
+  realizedPnl       Float    @default(0.0)
+  unrealizedPnl     Float    @default(0.0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model PaperOrder {
+  id            String       @id @default(uuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol        String
+  exchange      String
+  instrument    String       // e.g. "RELIANCE-EQ"
+  side          String       // "BUY" or "SELL"
+  orderType     String       // "MARKET", "LIMIT", "SL", "SL-M"
+  quantity      Int
+  price         Float        // 0 for MARKET
+  triggerPrice  Float?       // for SL / SL-M orders
+  status        String       // "PENDING", "OPEN", "FILLED", "CANCELLED", "REJECTED"
+  filledQty     Int          @default(0)
+  averagePrice  Float?
+  rejectReason  String?
+  trades        PaperTrade[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model PaperPosition {
+  id            String  @id @default(uuid())
+  userId        String
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol        String
+  exchange      String
+  buyQty        Int     @default(0)
+  sellQty       Int     @default(0)
+  netQty        Int     @default(0)
+  avgBuyPrice   Float   @default(0.0)
+  avgSellPrice  Float   @default(0.0)
+  ltp           Float   @default(0.0)
+  invested      Float   @default(0.0)
+  marketValue   Float   @default(0.0)
+  unrealizedPnl Float   @default(0.0)
+  realizedPnl   Float   @default(0.0)
+
+  @@unique([userId, symbol, exchange])
+}
+
+model PaperTrade {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     PaperOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol    String
+  side      String   // "BUY" or "SELL"
+  price     Float
+  qty       Int
+  tradeTime DateTime @default(now())
+}
+
+model PaperHolding {
+  id           String  @id @default(uuid())
+  userId       String
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol       String
+  qty          Int     @default(0)
+  avgPrice     Float   @default(0.0)
+  currentPrice Float   @default(0.0)
+  currentValue Float   @default(0.0)
+  profitLoss   Float   @default(0.0)
+
+  @@unique([userId, symbol])
+}
+
+model PaperTransaction {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          String   // "DEPOSIT", "WITHDRAWAL", "BROKERAGE", "CHARGES", "PROFIT", "LOSS", "ORDER_DEBIT", "ORDER_CREDIT"
+  amount        Float
+  description   String
+  balanceAfter  Float
+  createdAt     DateTime @default(now())
+}
