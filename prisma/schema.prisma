@@ -19,7 +19,6 @@ model User {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   
-  credentials        Credentials?
   watchlist          Watchlist[]
   orders             Order[]
   holdings           Holding[]
@@ -30,17 +29,6 @@ model User {
   paperTrades        PaperTrade[]
   paperHoldings      PaperHolding[]
   paperTransactions  PaperTransaction[]
-}
-
-model Credentials {
-  id           String   @id @default(uuid())
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  clientCode   String   // Angel One Client ID
-  password     String   // Encrypted Angel One password
-  apiKey       String   // SmartAPI developer API key
-  totpSecret   String   // Secret key for generating TOTP tokens
-  updatedAt    DateTime @updatedAt
 }
 
 model Watchlist {

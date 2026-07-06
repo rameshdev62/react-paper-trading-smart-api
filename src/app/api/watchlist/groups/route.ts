@@ -14,6 +14,7 @@ export async function DELETE(req: NextRequest) {
 
     const searchParams = req.nextUrl.searchParams;
     const group = searchParams.get("group");
+    const mode = searchParams.get("mode");
 
     if (!group) {
       return NextResponse.json({ error: "Missing group parameter" }, { status: 400 });
@@ -29,6 +30,13 @@ export async function DELETE(req: NextRequest) {
         group,
       },
     });
+
+    if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
+      const { startLiveFeed } = require("@/lib/smartapi");
+      startLiveFeed(user.userId).catch((err: any) => {
+        console.error("[Watchlist API] Failed to update live feed:", err);
+      });
+    }
 
     return NextResponse.json({ message: "Group deleted successfully" });
   } catch (error: any) {

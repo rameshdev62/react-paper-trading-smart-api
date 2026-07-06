@@ -1,12 +1,57 @@
 import { NextRequest } from "next/server";
 import { priceStore } from "@/lib/priceStore";
+import { getAuthUser } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  // Automatically trigger the simulation loop if in Mock Mode
-  if (process.env.NEXT_PUBLIC_APP_MODE === "mock") {
+  const user = await getAuthUser(req);
+  if (!user) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  // Query watchlist & holdings to lazy-initialize their prices in the central price cache
+  try {
+    const [watchlist, holdings] = await Promise.all([
+      prisma.watchlist.findMany({
+        where: { userId: user.userId },
+        select: { token: true },
+      }),
+      prisma.holding.findMany({
+        where: { userId: user.userId },
+        select: { token: true },
+      }),
+    ]);
+
+    const allUserTokens = new Set([
+      ...watchlist.map((w) => w.token),
+      ...holdings.map((h) => h.token),
+    ]);
+
+    for (const token of allUserTokens) {
+      priceStore.getPrice(token);
+    }
+  } catch (dbErr) {
+    console.error("[Market Stream API] Error initializing user tokens:", dbErr);
+  }
+
+  // Parse dynamic app mode from query parameters
+  const searchParams = req.nextUrl.searchParams;
+  const mode = searchParams.get("mode") || process.env.NEXT_PUBLIC_APP_MODE || "mock";
+
+  console.log(`[Market Stream API] Starting stream with mode: ${mode}`);
+
+  if (mode === "mock") {
     priceStore.startMockSimulation();
+    const { stopLiveFeed } = require("@/lib/smartapi");
+    stopLiveFeed();
+  } else if (mode === "live") {
+    priceStore.stopMockSimulation();
+    const { startLiveFeed } = require("@/lib/smartapi");
+    startLiveFeed(user.userId).catch((err: any) => {
+      console.error("[Market Stream API] Failed to start live feed:", err);
+    });
   }
 
   const encoder = new TextEncoder();

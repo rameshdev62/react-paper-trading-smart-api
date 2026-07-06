@@ -16,10 +16,21 @@ export function verifyToken(token: string): { userId: string; email: string } | 
 
 export async function getAuthUser(req: Request): Promise<{ userId: string; email: string } | null> {
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return null;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    return verifyToken(token);
   }
 
-  const token = authHeader.split(" ")[1];
-  return verifyToken(token);
+  // Fallback to query parameter token for SSE EventSource compatibility
+  try {
+    const url = new URL(req.url);
+    const queryToken = url.searchParams.get("token");
+    if (queryToken) {
+      return verifyToken(queryToken);
+    }
+  } catch (err) {
+    // URL parsing might fail if req.url is relative or invalid
+  }
+
+  return null;
 }

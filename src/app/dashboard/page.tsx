@@ -10,26 +10,15 @@ import { TradePanel } from "@/components/TradePanel";
 import { PortfolioSummary } from "@/components/PortfolioSummary";
 import { HoldingsTable } from "@/components/HoldingsTable";
 import { OrdersTable } from "@/components/OrdersTable";
-import { SettingsPanel } from "@/components/SettingsPanel";
 import { TradingViewChart } from "@/components/TradingViewChart";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
-import { BarChart3, Settings, Loader2, RefreshCw, PieChart, CircleCheck } from "lucide-react";
+import { MarketMovers } from "@/components/MarketMovers";
+import { BarChart3, Loader2, RefreshCw, PieChart } from "lucide-react";
 
 export default function DashboardPage() {
   const router = useRouter();
   const { token, loading, refreshPortfolio, refreshOrders, refreshingPortfolio, refreshingOrders } = useApp();
-  const [activeTab, setActiveTab] = useState<"overview" | "analytics" | "api_settings">("overview");
-  const [apiConfigured, setApiConfigured] = useState(false);
-
-  // Check if API credentials are configured
-  useEffect(() => {
-    fetch("/api/credentials", {
-      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-    })
-      .then((r) => r.json())
-      .then((d) => setApiConfigured(d.configured))
-      .catch(() => {});
-  }, []);
+  const [activeTab, setActiveTab] = useState<"overview" | "analytics">("overview");
 
   // Local state to share selected instrument between Search, Watchlist and Trade Panel
   const [selectedInstrument, setSelectedInstrument] = useState<{
@@ -116,22 +105,7 @@ export default function DashboardPage() {
                 Analytics
               </button>
 
-              <button
-                onClick={() => setActiveTab("api_settings")}
-                className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${activeTab === "api_settings"
-                    ? "border-emerald-500 text-emerald-400"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
-                  }`}
-              >
-                <Settings className="w-4 h-4" />
-                Angel One API Config
-                {apiConfigured && (
-                  <span className="flex items-center gap-1 text-[9px] text-emerald-400 font-bold ml-1">
-                    <CircleCheck className="w-2.5 h-2.5" />
-                    Configured
-                  </span>
-                )}
-              </button>
+
             </div>
             {activeTab === "overview" && (
               <button
@@ -154,13 +128,20 @@ export default function DashboardPage() {
                 {/* Portfolio Summary & historic area chart */}
                 <PortfolioSummary />
 
-                {/* Live TradingView Stock Chart */}
-                {selectedInstrument && (
-                  <TradingViewChart
-                    symbol={selectedInstrument.symbol}
-                    exchange={selectedInstrument.exchange}
-                  />
-                )}
+                {/* Live TradingView Stock Chart & Top Gainers/Losers side-by-side */}
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-stretch">
+                  <div className="xl:col-span-2 flex">
+                    {selectedInstrument && (
+                      <TradingViewChart
+                        symbol={selectedInstrument.symbol}
+                        exchange={selectedInstrument.exchange}
+                      />
+                    )}
+                  </div>
+                  <div className="flex flex-col flex-1">
+                    <MarketMovers onSelectInstrument={handleSelectInstrument} />
+                  </div>
+                </div>
 
                 {/* Open Positions & holdings grid */}
                 <HoldingsTable onSelectInstrument={handleSelectInstrument} />
@@ -168,10 +149,8 @@ export default function DashboardPage() {
                 {/* Order logs log */}
                 <OrdersTable />
               </>
-            ) : activeTab === "analytics" ? (
-              <AnalyticsDashboard />
             ) : (
-              <SettingsPanel />
+              <AnalyticsDashboard />
             )}
           </div>
         </div>

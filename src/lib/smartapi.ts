@@ -33,7 +33,7 @@ export async function validateCredentials(params: {
 
   // Perform login POST request to Angel One
   const loginUrl = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword";
-  
+
   const response = await fetch(loginUrl, {
     method: "POST",
     headers: {
@@ -66,23 +66,24 @@ export async function validateCredentials(params: {
 // Start the live feed for a specific user
 export async function startLiveFeed(userId: string) {
   try {
-    // 1. Fetch credentials from DB
-    const creds = await prisma.credentials.findUnique({
-      where: { userId },
-    });
+    // 1. Fetch credentials from environment variables
+    const clientCode = process.env.SMART_API_CLIENT_CODE;
+    const password = process.env.SMART_API_PASSWORD;
+    const apiKey = process.env.SMART_API_API_KEY;
+    const totpSecret = process.env.SMART_API_TOTP_SECRET;
 
-    if (!creds) {
-      console.log(`[SmartAPI] No credentials configured for user ${userId}. Live feed skipped.`);
+    if (!clientCode || !password || !apiKey || !totpSecret) {
+      console.log("[SmartAPI] Smart API environment variables not configured. Live feed skipped.");
       return;
     }
 
     // 2. Perform login to get JWT and Feed Token
-    console.log(`[SmartAPI] Logging in user ${creds.clientCode} to Angel One...`);
-    const { jwtToken } = await validateCredentials({
-      clientCode: creds.clientCode,
-      passwordHash: creds.password, // This is stored directly
-      apiKey: creds.apiKey,
-      totpSecret: creds.totpSecret,
+    console.log(`[SmartAPI] Logging in user ${clientCode} to Angel One...`);
+    const { jwtToken, feedToken } = await validateCredentials({
+      clientCode,
+      passwordHash: password,
+      apiKey,
+      totpSecret,
     });
 
     console.log("[SmartAPI] Login successful. Connecting WebSocket v2...");
@@ -91,18 +92,17 @@ export async function startLiveFeed(userId: string) {
     if (activeLiveWebsocket) {
       try {
         activeLiveWebsocket.close();
-      } catch (e) {}
+      } catch (e) { }
       activeLiveWebsocket = null;
     }
 
     // 4. Fetch the tokens we want to subscribe to (Watchlist & Holdings)
     const watchlist = await prisma.watchlist.findMany({ where: { userId } });
     const holdings = await prisma.holding.findMany({ where: { userId } });
-    
+
     const subscriptionTokens = Array.from(
       new Set([
-        "2885", // Always subscribe to RELIANCE baseline
-        "3045", // Always subscribe to SBIN
+        ...Object.keys(priceStore.getAllPrices()),
         ...watchlist.map((w) => w.token),
         ...holdings.map((h) => h.token),
       ])
@@ -119,9 +119,9 @@ export async function startLiveFeed(userId: string) {
     // Initialize Web Socket client
     const ws = new WebSocketV2({
       jwttoken: jwtToken,
-      apikey: creds.apiKey,
-      clientcode: creds.clientCode,
-      feedtype: "order_feed", // or 'mfeed' / 'sfeed' based on documentation
+      apikey: apiKey,
+      clientcode: clientCode,
+      feedtype: feedToken,
     });
 
     ws.connect()
@@ -159,8 +159,11 @@ export async function startLiveFeed(userId: string) {
             const ltp = tick.last_traded_price / 100; // API usually returns price in paise
             const changePercent = tick.change_percent || 0.0;
             
+            // Clean up token from double quotes if wrapped by the SDK
+            const cleanToken = tick.token.replace(/^"|"$/g, "");
+            
             // Update our central price cache
-            priceStore.setPrice(tick.token, ltp, changePercent);
+            priceStore.setPrice(cleanToken, ltp, changePercent);
           }
         });
 
@@ -179,7 +182,7 @@ export function stopLiveFeed() {
     try {
       activeLiveWebsocket.close();
       console.log("[SmartAPI] Live WebSocket feed closed.");
-    } catch (e) {}
+    } catch (e) { }
     activeLiveWebsocket = null;
   }
 }

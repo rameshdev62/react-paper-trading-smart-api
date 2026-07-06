@@ -97,7 +97,6 @@ interface AppContextType {
     productType: "INTRADAY" | "DELIVERY";
   }) => Promise<void>;
   cancelOrder: (orderId: string) => Promise<void>;
-  updateCredentials: (credentialsData: any) => Promise<void>;
   refreshPortfolio: () => Promise<void>;
   refreshOrders: () => Promise<void>;
   refreshingPortfolio: boolean;
@@ -169,7 +168,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       eventSourceRef.current.close();
     }
 
-    const sse = new EventSource("/api/market/stream");
+    const sse = new EventSource(`/api/market/stream?token=${encodeURIComponent(token)}&mode=${appMode}`);
     eventSourceRef.current = sse;
 
     sse.onmessage = (event) => {
@@ -292,7 +291,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const res = await fetch("/api/watchlist", {
       method: "POST",
       headers: getHeaders(),
-      body: JSON.stringify({ symbol, token, exchange, group }),
+      body: JSON.stringify({ symbol, token, exchange, group, mode: appMode }),
     });
     if (!res.ok) {
       const data = await res.json();
@@ -302,7 +301,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const removeFromWatchlist = async (token: string, exchange: string, group?: string) => {
-    const params = new URLSearchParams({ token, exchange });
+    const params = new URLSearchParams({ token, exchange, mode: appMode });
     if (group) params.set("group", group);
     const res = await fetch(`/api/watchlist?${params}`, {
       method: "DELETE",
@@ -338,7 +337,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (name === "Default") {
       throw new Error("Cannot delete the Default group");
     }
-    const res = await fetch(`/api/watchlist/groups?group=${encodeURIComponent(name)}`, {
+    const params = new URLSearchParams({ group: name, mode: appMode });
+    const res = await fetch(`/api/watchlist/groups?${params}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
@@ -377,16 +377,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await fetchOrders();
   };
 
-  const updateCredentials = async (credentialsData: any) => {
-    const res = await fetch("/api/credentials", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(credentialsData),
-    });
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to save credentials");
-  };
 
   const handleSetMode = (mode: "mock" | "live") => {
     localStorage.setItem("appMode", mode);
@@ -418,7 +409,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteGroup,
         submitOrder,
         cancelOrder,
-        updateCredentials,
         refreshPortfolio: fetchPortfolio,
         refreshOrders: fetchOrders,
         refreshingPortfolio,

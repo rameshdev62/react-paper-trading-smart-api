@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { symbol, token, exchange, group } = await req.json();
+    const { symbol, token, exchange, group, mode } = await req.json();
     if (!symbol || !token || !exchange) {
       return NextResponse.json({ error: "Missing symbol, token, or exchange" }, { status: 400 });
     }
@@ -79,6 +79,17 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Lazy-initialize the new token in the price cache
+    const { priceStore } = require("@/lib/priceStore");
+    priceStore.getPrice(token);
+
+    if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
+      const { startLiveFeed } = require("@/lib/smartapi");
+      startLiveFeed(user.userId).catch((err: any) => {
+        console.error("[Watchlist API] Failed to update live feed:", err);
+      });
+    }
+
     return NextResponse.json({ message: "Added to watchlist successfully", item }, { status: 201 });
   } catch (error: any) {
     console.error("[Watchlist API] Error adding to watchlist:", error);
@@ -98,6 +109,7 @@ export async function DELETE(req: NextRequest) {
     const token = searchParams.get("token");
     const exchange = searchParams.get("exchange");
     const group = searchParams.get("group") || "Default";
+    const mode = searchParams.get("mode");
 
     if (!token || !exchange) {
       return NextResponse.json({ error: "Missing token or exchange parameter" }, { status: 400 });
@@ -113,6 +125,13 @@ export async function DELETE(req: NextRequest) {
         },
       },
     });
+
+    if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
+      const { startLiveFeed } = require("@/lib/smartapi");
+      startLiveFeed(user.userId).catch((err: any) => {
+        console.error("[Watchlist API] Failed to update live feed:", err);
+      });
+    }
 
     return NextResponse.json({ message: "Removed from watchlist successfully" });
   } catch (error: any) {
