@@ -9,6 +9,8 @@ interface TradePanelProps {
     symbol: string;
     token: string;
     exchange: string;
+    transactionType?: "BUY" | "SELL";
+    quantity?: number;
   } | null;
 }
 
@@ -24,10 +26,18 @@ export const TradePanel: React.FC<TradePanelProps> = ({ selectedInstrument }) =>
   const priceInfo = selectedInstrument ? prices[selectedInstrument.token] : null;
   const ltp = priceInfo ? priceInfo.ltp : 100.0;
 
-  // Sync price field with LTP when switching to LIMIT and first selecting a stock
+  // Sync price field with LTP, pre-fill transactionType and quantity when selecting a stock
   useEffect(() => {
-    if (selectedInstrument && ltp) {
-      setPrice(ltp.toFixed(2));
+    if (selectedInstrument) {
+      if (ltp) {
+        setPrice(ltp.toFixed(2));
+      }
+      if (selectedInstrument.transactionType) {
+        setTransactionType(selectedInstrument.transactionType);
+      }
+      if (selectedInstrument.quantity !== undefined) {
+        setQuantity(selectedInstrument.quantity);
+      }
     }
   }, [selectedInstrument]);
 

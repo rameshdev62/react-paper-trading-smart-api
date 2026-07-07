@@ -46,7 +46,7 @@ async function getMockMovers() {
     .sort((a, b) => a.changePercent - b.changePercent)
     .slice(0, 5);
 
-  return { gainers, losers };
+  return { gainers, losers, nifty50: list };
 }
 
 export async function GET(req: NextRequest) {
@@ -124,7 +124,8 @@ export async function GET(req: NextRequest) {
               const gainers = (gainersData.data || []).map(mapItem).slice(0, 5);
               const losers = (losersData.data || []).map(mapItem).slice(0, 5);
 
-              return NextResponse.json({ gainers, losers });
+              const mockData = await getMockMovers();
+              return NextResponse.json({ gainers, losers, nifty50: mockData.nifty50 });
             }
           }
           console.warn("[Market Gainers/Losers API] Live API failed or returned non-ok status. Falling back to mock.");

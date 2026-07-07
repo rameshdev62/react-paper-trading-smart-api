@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, RefreshCw, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, RefreshCw, Loader2, LineChart, List } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { toTradingViewSymbol } from "./TradingViewChart";
 
 interface MoverStock {
   token: string;
@@ -52,7 +53,7 @@ const MoverRow: React.FC<{
   return (
     <div
       onClick={onClick}
-      className={`flex items-center justify-between p-3 rounded-lg hover:bg-slate-800/40 cursor-pointer transition-all duration-300 ${bgFlashClass}`}
+      className={`flex items-center justify-between p-3 rounded-lg hover:bg-slate-800/40 cursor-pointer transition-all duration-300 group ${bgFlashClass}`}
     >
       <div className="flex flex-col min-w-0">
         <div className="flex items-center gap-1.5">
@@ -63,16 +64,28 @@ const MoverRow: React.FC<{
         </div>
         <span className="text-[10px] text-slate-500 truncate max-w-[150px] mt-0.5">{stock.name}</span>
       </div>
-      <div className="flex flex-col items-end shrink-0">
-        <span className="text-xs font-bold text-slate-200 font-mono">{stock.ltp ? `₹${stock.ltp.toFixed(2)}` : "-"}</span>
-        <span
-          className={`text-[10px] font-bold mt-0.5 flex items-center gap-0.5 ${
-            isPositive ? "text-emerald-400" : "text-rose-400"
-          }`}
+      <div className="flex items-center gap-3 shrink-0 text-right">
+        <div className="flex flex-col items-end">
+          <span className="text-xs font-bold text-slate-200 font-mono">{stock.ltp ? `₹${stock.ltp.toFixed(2)}` : "-"}</span>
+          <span
+            className={`text-[10px] font-bold mt-0.5 flex items-center gap-0.5 ${
+              isPositive ? "text-emerald-400" : "text-rose-400"
+            }`}
+          >
+            {isPositive ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+            {isPositive ? "+" : ""}{stock.changePercent.toFixed(2)}%
+          </span>
+        </div>
+        <a
+          href={`https://www.tradingview.com/chart/3NjDmwlc/?symbol=${encodeURIComponent(toTradingViewSymbol(stock.symbol, stock.exchange === "nse_cm" || stock.exchange === "NSE" ? "NSE" : "BSE"))}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="Open TradingView Chart"
+          className="p-1 text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/5 rounded-md transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
         >
-          {isPositive ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-          {isPositive ? "+" : ""}{stock.changePercent.toFixed(2)}%
-        </span>
+          <LineChart className="w-3.5 h-3.5" />
+        </a>
       </div>
     </div>
   );
@@ -80,9 +93,10 @@ const MoverRow: React.FC<{
 
 export const MarketMovers: React.FC<MarketMoversProps> = ({ onSelectInstrument }) => {
   const { prices, token, appMode } = useApp();
-  const [activeTab, setActiveTab] = useState<"gainers" | "losers">("gainers");
+  const [activeTab, setActiveTab] = useState<"gainers" | "losers" | "nifty50">("gainers");
   const [gainers, setGainers] = useState<MoverStock[]>([]);
   const [losers, setLosers] = useState<MoverStock[]>([]);
+  const [nifty50, setNifty50] = useState<MoverStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -98,6 +112,7 @@ export const MarketMovers: React.FC<MarketMoversProps> = ({ onSelectInstrument }
       const data = await res.json();
       setGainers(data.gainers || []);
       setLosers(data.losers || []);
+      setNifty50(data.nifty50 || []);
       setError("");
     } catch (err: any) {
       console.error(err);
@@ -114,7 +129,7 @@ export const MarketMovers: React.FC<MarketMoversProps> = ({ onSelectInstrument }
     }
   }, [token, appMode]);
 
-  const getLiveMovers = (list: MoverStock[], isGainers: boolean) => {
+  const getLiveMovers = (list: MoverStock[], sortType: "gainers" | "losers" | "nifty50") => {
     const liveList = list.map((item) => {
       const livePrice = prices[item.token];
       if (livePrice) {
@@ -128,15 +143,20 @@ export const MarketMovers: React.FC<MarketMoversProps> = ({ onSelectInstrument }
     });
 
     return [...liveList].sort((a, b) => {
-      return isGainers
+      if (sortType === "nifty50") {
+        return a.symbol.localeCompare(b.symbol);
+      }
+      return sortType === "gainers"
         ? b.changePercent - a.changePercent
         : a.changePercent - b.changePercent;
     });
   };
 
   const displayedList = activeTab === "gainers" 
-    ? getLiveMovers(gainers, true) 
-    : getLiveMovers(losers, false);
+    ? getLiveMovers(gainers, "gainers") 
+    : activeTab === "losers"
+    ? getLiveMovers(losers, "losers")
+    : getLiveMovers(nifty50, "nifty50");
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg flex flex-col gap-4 h-full min-h-[420px]">
@@ -177,6 +197,17 @@ export const MarketMovers: React.FC<MarketMoversProps> = ({ onSelectInstrument }
         >
           <TrendingDown className="w-3.5 h-3.5" />
           Losers
+        </button>
+        <button
+          onClick={() => setActiveTab("nifty50")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 cursor-pointer transition-all ${
+            activeTab === "nifty50"
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <List className="w-3.5 h-3.5" />
+          Nifty 50
         </button>
       </div>
 

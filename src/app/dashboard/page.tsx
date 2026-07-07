@@ -10,7 +10,6 @@ import { TradePanel } from "@/components/TradePanel";
 import { PortfolioSummary } from "@/components/PortfolioSummary";
 import { HoldingsTable } from "@/components/HoldingsTable";
 import { OrdersTable } from "@/components/OrdersTable";
-import { TradingViewChart } from "@/components/TradingViewChart";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { MarketMovers } from "@/components/MarketMovers";
 import { BarChart3, Loader2, RefreshCw, PieChart } from "lucide-react";
@@ -128,20 +127,8 @@ export default function DashboardPage() {
                 {/* Portfolio Summary & historic area chart */}
                 <PortfolioSummary />
 
-                {/* Live TradingView Stock Chart & Top Gainers/Losers side-by-side */}
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-stretch">
-                  <div className="xl:col-span-2 flex">
-                    {selectedInstrument && (
-                      <TradingViewChart
-                        symbol={selectedInstrument.symbol}
-                        exchange={selectedInstrument.exchange}
-                      />
-                    )}
-                  </div>
-                  <div className="flex flex-col flex-1">
-                    <MarketMovers onSelectInstrument={handleSelectInstrument} />
-                  </div>
-                </div>
+                {/* Top Gainers & Losers */}
+                <MarketMovers onSelectInstrument={handleSelectInstrument} />
 
                 {/* Open Positions & holdings grid */}
                 <HoldingsTable onSelectInstrument={handleSelectInstrument} />

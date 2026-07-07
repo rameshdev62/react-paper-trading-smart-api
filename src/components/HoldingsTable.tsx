@@ -5,7 +5,13 @@ import { useApp } from "@/context/AppContext";
 import { TrendingUp, TrendingDown, RefreshCw } from "lucide-react";
 
 interface HoldingsTableProps {
-  onSelectInstrument?: (inst: { symbol: string; token: string; exchange: string }) => void;
+  onSelectInstrument?: (inst: {
+    symbol: string;
+    token: string;
+    exchange: string;
+    transactionType?: "BUY" | "SELL";
+    quantity?: number;
+  }) => void;
 }
 
 export const HoldingsTable: React.FC<HoldingsTableProps> = ({ onSelectInstrument }) => {
@@ -17,8 +23,9 @@ export const HoldingsTable: React.FC<HoldingsTableProps> = ({ onSelectInstrument
         symbol: h.symbol,
         token: h.token,
         exchange: h.exchange,
+        transactionType: type,
+        quantity: type === "SELL" ? h.quantity : 1,
       });
-      // We can trigger terminal state adjustments externally, or just focus terminal
     }
   };
 

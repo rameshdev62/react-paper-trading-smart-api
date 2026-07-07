@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { Trash2, TrendingUp, TrendingDown, Plus, X, Check, Pencil } from "lucide-react";
+import { Trash2, TrendingUp, TrendingDown, Plus, X, Check, Pencil, LineChart } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { toTradingViewSymbol } from "./TradingViewChart";
 
 interface WatchlistProps {
   onSelectInstrument?: (inst: { symbol: string; token: string; exchange: string }) => void;
@@ -278,6 +279,17 @@ export const Watchlist: React.FC<WatchlistProps> = ({ onSelectInstrument, select
                       </span>
                     )}
                   </div>
+
+                  <a
+                    href={`https://www.tradingview.com/chart/3NjDmwlc/?symbol=${encodeURIComponent(toTradingViewSymbol(item.symbol, item.exchange))}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title="Open TradingView Chart"
+                    className="p-1 text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/5 rounded-md transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  >
+                    <LineChart className="w-3.5 h-3.5" />
+                  </a>
 
                   <button
                     onClick={(e) => handleRemove(e, item.token, item.exchange)}
