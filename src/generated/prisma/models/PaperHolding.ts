@@ -526,6 +526,7 @@ export type PaperHoldingCreateOrConnectWithoutUserInput = {
 
 export type PaperHoldingCreateManyUserInputEnvelope = {
   data: Prisma.PaperHoldingCreateManyUserInput | Prisma.PaperHoldingCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type PaperHoldingUpsertWithWhereUniqueWithoutUserInput = {
@@ -1338,6 +1339,7 @@ export type PaperHoldingCreateManyArgs<ExtArgs extends runtime.Types.Extensions.
    * The data used to create many PaperHoldings.
    */
   data: Prisma.PaperHoldingCreateManyInput | Prisma.PaperHoldingCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1356,6 +1358,7 @@ export type PaperHoldingCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Ex
    * The data used to create many PaperHoldings.
    */
   data: Prisma.PaperHoldingCreateManyInput | Prisma.PaperHoldingCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

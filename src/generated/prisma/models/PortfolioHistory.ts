@@ -430,6 +430,7 @@ export type PortfolioHistoryCreateOrConnectWithoutUserInput = {
 
 export type PortfolioHistoryCreateManyUserInputEnvelope = {
   data: Prisma.PortfolioHistoryCreateManyUserInput | Prisma.PortfolioHistoryCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type PortfolioHistoryUpsertWithWhereUniqueWithoutUserInput = {
@@ -1209,6 +1210,7 @@ export type PortfolioHistoryCreateManyArgs<ExtArgs extends runtime.Types.Extensi
    * The data used to create many PortfolioHistories.
    */
   data: Prisma.PortfolioHistoryCreateManyInput | Prisma.PortfolioHistoryCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1227,6 +1229,7 @@ export type PortfolioHistoryCreateManyAndReturnArgs<ExtArgs extends runtime.Type
    * The data used to create many PortfolioHistories.
    */
   data: Prisma.PortfolioHistoryCreateManyInput | Prisma.PortfolioHistoryCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

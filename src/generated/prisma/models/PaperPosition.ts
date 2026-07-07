@@ -701,6 +701,7 @@ export type PaperPositionCreateOrConnectWithoutUserInput = {
 
 export type PaperPositionCreateManyUserInputEnvelope = {
   data: Prisma.PaperPositionCreateManyUserInput | Prisma.PaperPositionCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type PaperPositionUpsertWithWhereUniqueWithoutUserInput = {
@@ -1579,6 +1580,7 @@ export type PaperPositionCreateManyArgs<ExtArgs extends runtime.Types.Extensions
    * The data used to create many PaperPositions.
    */
   data: Prisma.PaperPositionCreateManyInput | Prisma.PaperPositionCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1597,6 +1599,7 @@ export type PaperPositionCreateManyAndReturnArgs<ExtArgs extends runtime.Types.E
    * The data used to create many PaperPositions.
    */
   data: Prisma.PaperPositionCreateManyInput | Prisma.PaperPositionCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

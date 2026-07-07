@@ -478,6 +478,7 @@ export type PaperTransactionCreateOrConnectWithoutUserInput = {
 
 export type PaperTransactionCreateManyUserInputEnvelope = {
   data: Prisma.PaperTransactionCreateManyUserInput | Prisma.PaperTransactionCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type PaperTransactionUpsertWithWhereUniqueWithoutUserInput = {
@@ -1279,6 +1280,7 @@ export type PaperTransactionCreateManyArgs<ExtArgs extends runtime.Types.Extensi
    * The data used to create many PaperTransactions.
    */
   data: Prisma.PaperTransactionCreateManyInput | Prisma.PaperTransactionCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1297,6 +1299,7 @@ export type PaperTransactionCreateManyAndReturnArgs<ExtArgs extends runtime.Type
    * The data used to create many PaperTransactions.
    */
   data: Prisma.PaperTransactionCreateManyInput | Prisma.PaperTransactionCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

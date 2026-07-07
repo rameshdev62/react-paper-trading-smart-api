@@ -748,6 +748,7 @@ export type PaperOrderCreateOrConnectWithoutUserInput = {
 
 export type PaperOrderCreateManyUserInputEnvelope = {
   data: Prisma.PaperOrderCreateManyUserInput | Prisma.PaperOrderCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type PaperOrderUpsertWithWhereUniqueWithoutUserInput = {
@@ -1777,6 +1778,7 @@ export type PaperOrderCreateManyArgs<ExtArgs extends runtime.Types.Extensions.In
    * The data used to create many PaperOrders.
    */
   data: Prisma.PaperOrderCreateManyInput | Prisma.PaperOrderCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1795,6 +1797,7 @@ export type PaperOrderCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Exte
    * The data used to create many PaperOrders.
    */
   data: Prisma.PaperOrderCreateManyInput | Prisma.PaperOrderCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

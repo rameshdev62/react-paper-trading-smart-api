@@ -1344,6 +1344,7 @@ export type PaperAccountCreateManyArgs<ExtArgs extends runtime.Types.Extensions.
    * The data used to create many PaperAccounts.
    */
   data: Prisma.PaperAccountCreateManyInput | Prisma.PaperAccountCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1362,6 +1363,7 @@ export type PaperAccountCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Ex
    * The data used to create many PaperAccounts.
    */
   data: Prisma.PaperAccountCreateManyInput | Prisma.PaperAccountCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

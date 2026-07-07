@@ -546,6 +546,7 @@ export type PaperTradeCreateOrConnectWithoutUserInput = {
 
 export type PaperTradeCreateManyUserInputEnvelope = {
   data: Prisma.PaperTradeCreateManyUserInput | Prisma.PaperTradeCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type PaperTradeUpsertWithWhereUniqueWithoutUserInput = {
@@ -605,6 +606,7 @@ export type PaperTradeCreateOrConnectWithoutOrderInput = {
 
 export type PaperTradeCreateManyOrderInputEnvelope = {
   data: Prisma.PaperTradeCreateManyOrderInput | Prisma.PaperTradeCreateManyOrderInput[]
+  skipDuplicates?: boolean
 }
 
 export type PaperTradeUpsertWithWhereUniqueWithoutOrderInput = {
@@ -1451,6 +1453,7 @@ export type PaperTradeCreateManyArgs<ExtArgs extends runtime.Types.Extensions.In
    * The data used to create many PaperTrades.
    */
   data: Prisma.PaperTradeCreateManyInput | Prisma.PaperTradeCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1469,6 +1472,7 @@ export type PaperTradeCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Exte
    * The data used to create many PaperTrades.
    */
   data: Prisma.PaperTradeCreateManyInput | Prisma.PaperTradeCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */
