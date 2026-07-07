@@ -121,77 +121,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [refreshingOrders, setRefreshingOrders] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // Initialize Auth State from localStorage
-  useEffect(() => {
-    const storedToken = localStorage.getItem("token");
-    const storedUser = localStorage.getItem("user");
-    const storedMode = localStorage.getItem("appMode") as "mock" | "live";
-
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-    }
-    if (storedMode) {
-      setAppMode(storedMode);
-    }
-    setLoading(false);
-  }, []);
-
-  // Fetch initial data once token is set
-  useEffect(() => {
-    if (token) {
-      fetchWatchlist();
-      fetchPortfolio();
-      fetchOrders();
-    } else {
-      setWatchlist([]);
-      setHoldings([]);
-      setOrders([]);
-      setPortfolioSummary(null);
-    }
-  }, [token]);
-
-  // Connect to Real-time price feed via SSE
-  useEffect(() => {
-    if (!token) {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      return;
-    }
-
-    console.log("[AppContext] Connecting to market data SSE stream...");
-    
-    // Close existing connection if any
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
-
-    const sse = new EventSource(`/api/market/stream?token=${encodeURIComponent(token)}&mode=${appMode}`);
-    eventSourceRef.current = sse;
-
-    sse.onmessage = (event) => {
-      try {
-        const rawPrices = JSON.parse(event.data) as Record<string, PriceData>;
-        setPrices(rawPrices);
-      } catch (err) {
-        console.error("SSE parse error:", err);
-      }
-    };
-
-    sse.onerror = (err) => {
-      console.error("SSE connection error. Retrying...", err);
-      sse.close();
-    };
-
-    return () => {
-      sse.close();
-      eventSourceRef.current = null;
-    };
-  }, [token, appMode]);
-
-  // Connected to real-time price feed via SSE
+  // Effects are declared below helper functions to avoid lint immutability issues
 
   const getHeaders = () => {
     return {
@@ -314,7 +244,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await fetchWatchlist();
   };
 
-  const createGroup = async (name: string) => {
+  const createGroup = async (_name: string) => {
     // Groups are created implicitly when the first item is added.
     // This just refetches to ensure the UI is up to date.
     await fetchWatchlist();
@@ -349,7 +279,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await fetchWatchlist();
   };
 
-  const submitOrder = async (orderData: any) => {
+  const submitOrder = async (orderData: {
+    symbol: string;
+    token: string;
+    exchange: string;
+    quantity: number;
+    price: number;
+    orderType: "MARKET" | "LIMIT" | "SL";
+    transactionType: "BUY" | "SELL";
+    productType: "INTRADAY" | "DELIVERY";
+  }) => {
     const res = await fetch("/api/orders", {
       method: "POST",
       headers: getHeaders(),
@@ -385,6 +324,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Refresh page state to restart feeds
     router.refresh();
   };
+
+  // Initialize Auth State from localStorage
+  useEffect(() => {
+    const storedToken = localStorage.getItem("token");
+    const storedUser = localStorage.getItem("user");
+    const storedMode = localStorage.getItem("appMode") as "mock" | "live";
+
+    // Defer state updates to avoid synchronous setState inside useEffect
+    setTimeout(() => {
+      if (storedToken && storedUser) {
+        setToken(storedToken);
+        setUser(JSON.parse(storedUser));
+      }
+      if (storedMode) {
+        setAppMode(storedMode);
+      }
+      setLoading(false);
+    }, 0);
+  }, []);
+
+  // Fetch initial data once token is set
+  useEffect(() => {
+    if (token) {
+      fetchWatchlist();
+      fetchPortfolio();
+      fetchOrders();
+    } else {
+      // Defer state updates to avoid synchronous setState inside useEffect
+      setTimeout(() => {
+        setWatchlist([]);
+        setHoldings([]);
+        setOrders([]);
+        setPortfolioSummary(null);
+      }, 0);
+    }
+  }, [token]);
+
+  // Connect to Real-time price feed via SSE
+  useEffect(() => {
+    if (!token) {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      return;
+    }
+
+    console.log("[AppContext] Connecting to market data SSE stream...");
+    
+    // Close existing connection if any
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const sse = new EventSource(`/api/market/stream?token=${encodeURIComponent(token)}&mode=${appMode}`);
+    eventSourceRef.current = sse;
+
+    sse.onmessage = (event) => {
+      try {
+        const rawPrices = JSON.parse(event.data) as Record<string, PriceData>;
+        setPrices(rawPrices);
+      } catch (err) {
+        console.error("SSE parse error:", err);
+      }
+    };
+
+    sse.onerror = (err) => {
+      console.error("SSE connection error. Retrying...", err);
+      sse.close();
+    };
+
+    return () => {
+      sse.close();
+      eventSourceRef.current = null;
+    };
+  }, [token, appMode]);
 
   return (
     <AppContext.Provider

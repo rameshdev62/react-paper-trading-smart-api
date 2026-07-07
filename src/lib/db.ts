@@ -18,7 +18,7 @@ if (typeof window === "undefined") {
     globalForPrisma.prisma = prisma;
   }
 } else {
-  prisma = null as any;
+  prisma = null as unknown as PrismaClient;
 }
 
 export { prisma };

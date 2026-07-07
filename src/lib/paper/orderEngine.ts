@@ -1,7 +1,7 @@
 import { prisma } from "../db";
-import { getLivePrice } from "./market";
-import { getMarginRequired, validateBalance } from "./margin";
+import { validateBalance } from "./margin";
 import { calculateCharges } from "./brokerage";
+import { priceStore } from "../priceStore";
 
 interface PlaceOrderInput {
   userId: string;
@@ -64,11 +64,11 @@ export async function placeOrder(input: PlaceOrderInput) {
   return { success: true, orderId: order.id, status: "OPEN" };
 }
 
-async function executeOrder(orderId: string) {
+export async function executeOrder(orderId: string, fillPrice?: number) {
   const order = await prisma.paperOrder.findUnique({ where: { id: orderId } });
   if (!order) throw new Error("Order not found");
 
-  const livePrice = getLivePriceBySymbol(order.symbol);
+  const livePrice = fillPrice || await getLivePriceBySymbol(order.symbol);
   const executionPrice = livePrice || order.price || 0;
 
   if (executionPrice <= 0) {
@@ -80,7 +80,7 @@ async function executeOrder(orderId: string) {
     const required = order.quantity * executionPrice;
     const validation = await validateBalance(order.userId, required);
     if (!validation.valid) {
-      return rejectOrder(orderId, validation.message!);
+      return rejectOrder(orderId, validation.message || "Insufficient funds");
     }
   }
 
@@ -106,9 +106,9 @@ async function executeOrder(orderId: string) {
   const charges = calculateCharges(tradeValue);
 
   // Execute — create trade, update position, update balance
-  const [trade] = await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     // Create trade record
-    const trade = await tx.paperTrade.create({
+    await tx.paperTrade.create({
       data: {
         orderId: order.id,
         userId: order.userId,
@@ -167,11 +167,9 @@ async function executeOrder(orderId: string) {
         },
       });
     }
-
-    return [trade];
   });
 
-  // Mark order as FILLED
+  // Mark order as FILLED (or EXECUTED for paper simulator)
   await prisma.paperOrder.update({
     where: { id: order.id },
     data: {
@@ -184,21 +182,32 @@ async function executeOrder(orderId: string) {
   return { success: true, orderId: order.id, status: "FILLED", price: executionPrice };
 }
 
-function getLivePriceBySymbol(symbol: string): number {
-  const { priceStore } = require("../../lib/priceStore") as { priceStore: { getAllPrices(): Record<string, { ltp: number }> } };
-  const all = priceStore.getAllPrices();
-  const values = Object.values(all);
-  if (values.length > 0) return values[0].ltp;
+async function getLivePriceBySymbol(symbol: string): Promise<number> {
+  const inst = await prisma.instrument.findFirst({
+    where: { symbol },
+    select: { token: true },
+  });
+  if (inst) {
+    const priceInfo = priceStore.getPrice(inst.token);
+    return priceInfo ? priceInfo.ltp : 0;
+  }
   return 0;
 }
 
-async function rejectOrder(userIdOrId: string, reason: string) {
-  const id = userIdOrId;
-  await prisma.paperOrder.update({
-    where: { id },
-    data: { status: "REJECTED", rejectReason: reason },
-  });
-  return { success: false, orderId: id, status: "REJECTED", reason };
+async function rejectOrder(orderId: string, reason: string) {
+  // If the ID is a user UUID (from placeOrder fallback), skip updating DB
+  if (orderId.length > 36) {
+    return { success: false, orderId, status: "REJECTED", reason };
+  }
+  try {
+    await prisma.paperOrder.update({
+      where: { id: orderId },
+      data: { status: "REJECTED", rejectReason: reason },
+    });
+  } catch {
+    // Ignore db write failure if order record doesn't exist
+  }
+  return { success: false, orderId, status: "REJECTED", reason };
 }
 
 async function updatePosition(
@@ -262,4 +271,60 @@ async function updatePosition(
       },
     });
   }
+}
+
+export async function processPendingPaperOrders() {
+  try {
+    const openOrders = await prisma.paperOrder.findMany({
+      where: { status: "OPEN" },
+    });
+
+    if (openOrders.length === 0) return;
+
+    for (const order of openOrders) {
+      const inst = await prisma.instrument.findFirst({
+        where: { symbol: order.symbol },
+        select: { token: true },
+      });
+      if (!inst) continue;
+
+      const currentPrice = priceStore.getPrice(inst.token);
+      if (!currentPrice) continue;
+
+      const ltp = currentPrice.ltp;
+      let shouldTrigger = false;
+
+      // Evaluate order type and criteria
+      if (order.orderType === "LIMIT") {
+        if (order.side === "BUY" && ltp <= order.price) {
+          shouldTrigger = true;
+        } else if (order.side === "SELL" && ltp >= order.price) {
+          shouldTrigger = true;
+        }
+      } else if (order.orderType === "SL" || order.orderType === "SL-M") {
+        const trigger = order.triggerPrice || order.price;
+        if (order.side === "BUY" && ltp >= trigger) {
+          shouldTrigger = true;
+        } else if (order.side === "SELL" && ltp <= trigger) {
+          shouldTrigger = true;
+        }
+      }
+
+      if (shouldTrigger) {
+        console.log(`[PaperOrderEngine] Triggering open order ${order.id} for ${order.symbol} at current price ${ltp}`);
+        await executeOrder(order.id, ltp);
+      }
+    }
+  } catch (err) {
+    console.error("[PaperOrderEngine] Error processing pending orders:", err);
+  }
+}
+
+// Subscribe to price store to run order matching on every price tick
+if (typeof window === "undefined") {
+  priceStore.subscribe(() => {
+    processPendingPaperOrders().catch((err) => {
+      console.error("[PaperOrderEngine] Matcher tick error:", err);
+    });
+  });
 }

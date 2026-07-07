@@ -9,7 +9,7 @@ export function signToken(userId: string, email: string): string {
 export function verifyToken(token: string): { userId: string; email: string } | null {
   try {
     return jwt.verify(token, JWT_SECRET) as { userId: string; email: string };
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -28,7 +28,7 @@ export async function getAuthUser(req: Request): Promise<{ userId: string; email
     if (queryToken) {
       return verifyToken(queryToken);
     }
-  } catch (err) {
+  } catch {
     // URL parsing might fail if req.url is relative or invalid
   }
 

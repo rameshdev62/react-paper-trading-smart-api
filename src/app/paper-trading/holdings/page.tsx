@@ -34,7 +34,7 @@ export default function HoldingsPage() {
   const fetchHoldings = async () => {
     setFetching(true);
     try {
-      const res = await fetch("/api/paper/history", {
+      const res = await fetch("/api/paper/holdings", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Failed to fetch holdings");

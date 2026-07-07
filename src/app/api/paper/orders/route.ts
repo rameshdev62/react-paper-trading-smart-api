@@ -24,7 +24,20 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
     });
 
-    return NextResponse.json(orders);
+    const mapped = orders.map((o) => ({
+      id: o.id,
+      symbol: o.symbol,
+      side: o.side,
+      type: o.orderType,
+      quantity: o.quantity,
+      price: o.price,
+      status: o.status,
+      filledQty: o.filledQty,
+      avgPrice: o.averagePrice || 0,
+      createdAt: o.createdAt,
+    }));
+
+    return NextResponse.json(mapped);
   } catch (error: any) {
     console.error("[Paper Orders API] Error fetching orders:", error);
     return NextResponse.json({ error: "Failed to fetch orders" }, { status: 500 });

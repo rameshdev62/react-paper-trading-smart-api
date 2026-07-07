@@ -2,10 +2,12 @@
 
 import React from "react";
 import { useApp } from "@/context/AppContext";
-import { LogOut, Radio, Shield, Settings, User } from "lucide-react";
+import { LogOut, Radio, Shield, User } from "lucide-react";
+import { usePathname } from "next/navigation";
 
 export const Navbar: React.FC = () => {
   const { user, logout, appMode, setAppMode } = useApp();
+  const pathname = usePathname() || "";
 
   if (!user) return null;
 
@@ -19,6 +21,30 @@ export const Navbar: React.FC = () => {
           <span className="font-bold text-lg tracking-wide bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">
             Smart Paper Trading
           </span>
+        </div>
+
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-1.5 ml-6 border-l border-slate-800 pl-6">
+          <a
+            href="/dashboard"
+            className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg transition-all border ${
+              pathname === "/dashboard"
+                ? "bg-slate-800 text-emerald-400 border-slate-700/50 shadow-sm"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Trading Desk
+          </a>
+          <a
+            href="/paper-trading"
+            className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg transition-all border ${
+              pathname.startsWith("/paper-trading")
+                ? "bg-slate-800 text-emerald-400 border-slate-700/50 shadow-sm"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Paper Desk
+          </a>
         </div>
       </div>
 

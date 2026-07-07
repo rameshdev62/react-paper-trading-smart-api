@@ -12,7 +12,7 @@ interface LoginResponse {
   };
 }
 
-let activeLiveWebsocket: any = null;
+let activeLiveWebsocket: { close: () => void } | null = null;
 
 // Validate credentials by attempting a live session login
 export async function validateCredentials(params: {
@@ -27,7 +27,7 @@ export async function validateCredentials(params: {
   let token = "";
   try {
     token = generateSync({ secret: totpSecret });
-  } catch (err) {
+  } catch {
     throw new Error("Invalid TOTP secret format. Please check your key.");
   }
 
@@ -92,7 +92,7 @@ export async function startLiveFeed(userId: string) {
     if (activeLiveWebsocket) {
       try {
         activeLiveWebsocket.close();
-      } catch (e) { }
+      } catch { }
       activeLiveWebsocket = null;
     }
 
@@ -114,7 +114,7 @@ export async function startLiveFeed(userId: string) {
     }
 
     // Import WebSocketV2 dynamically to prevent server build issues
-    const { WebSocketV2 } = require("smartapi-javascript");
+    const { WebSocketV2 } = await import("smartapi-javascript");
 
     // Initialize Web Socket client
     const ws = new WebSocketV2({
@@ -154,7 +154,7 @@ export async function startLiveFeed(userId: string) {
         }
 
         // Listen for tick updates
-        ws.on("tick", (tick: any) => {
+        ws.on("tick", (tick: { token: string; last_traded_price: number; change_percent?: number }) => {
           if (tick && tick.token && tick.last_traded_price) {
             const ltp = tick.last_traded_price / 100; // API usually returns price in paise
             const changePercent = tick.change_percent || 0.0;
@@ -169,11 +169,12 @@ export async function startLiveFeed(userId: string) {
 
         activeLiveWebsocket = ws;
       })
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         console.error("[SmartAPI] WebSocket connection failed:", err);
       });
-  } catch (error: any) {
-    console.error("[SmartAPI] Error starting live feed:", error.message || error);
+  } catch (error: unknown) {
+    const errMessage = error instanceof Error ? error.message : String(error);
+    console.error("[SmartAPI] Error starting live feed:", errMessage);
   }
 }
 
@@ -182,7 +183,8 @@ export function stopLiveFeed() {
     try {
       activeLiveWebsocket.close();
       console.log("[SmartAPI] Live WebSocket feed closed.");
-    } catch (e) { }
+    } catch { }
     activeLiveWebsocket = null;
   }
 }
+
