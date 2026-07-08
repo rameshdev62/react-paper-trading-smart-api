@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -21,15 +21,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Cannot rename the Default group" }, { status: 400 });
     }
 
-    await prisma.watchlist.updateMany({
-      where: {
-        userId: user.userId,
-        group: oldName,
-      },
-      data: {
-        group: newName,
-      },
-    });
+    await query(
+      'UPDATE "Watchlist" SET "group" = $1 WHERE "userId" = $2 AND "group" = $3',
+      [newName, user.userId, oldName]
+    );
 
     return NextResponse.json({ message: "Group renamed successfully" });
   } catch (error: any) {

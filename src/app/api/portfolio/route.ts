@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 
 export const dynamic = "force-dynamic";
@@ -13,26 +13,23 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch user details
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.userId },
-      select: { balance: true },
-    });
+    const userRes = await query('SELECT balance FROM "User" WHERE id = $1', [user.userId]);
+    const dbUser = userRes.rows[0];
 
     if (!dbUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     // Fetch holdings
-    const holdings = await prisma.holding.findMany({
-      where: { userId: user.userId },
-    });
+    const holdingsRes = await query('SELECT * FROM "Holding" WHERE "userId" = $1', [user.userId]);
+    const holdings = holdingsRes.rows;
 
-    // Fetch portfolio history log (last 30 logs for charts)
-    const history = await prisma.portfolioHistory.findMany({
-      where: { userId: user.userId },
-      orderBy: { timestamp: "asc" },
-      take: 50,
-    });
+    // Fetch portfolio history log (last 50 logs for charts)
+    const historyRes = await query(
+      'SELECT * FROM "PortfolioHistory" WHERE "userId" = $1 ORDER BY timestamp ASC LIMIT 50',
+      [user.userId]
+    );
+    const history = historyRes.rows;
 
     let totalHoldingsCost = 0;
     let totalHoldingsValue = 0;

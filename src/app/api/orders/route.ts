@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 import { placeOrder } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
@@ -13,10 +13,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const orders = await prisma.order.findMany({
-      where: { userId: user.userId },
-      orderBy: { createdAt: "desc" },
-    });
+    const result = await query(
+      'SELECT * FROM "Order" WHERE "userId" = $1 ORDER BY "createdAt" DESC',
+      [user.userId]
+    );
+    const orders = result.rows;
 
     return NextResponse.json(orders);
   } catch (error: any) {

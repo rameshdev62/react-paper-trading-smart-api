@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { pool } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -17,10 +17,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Cancel order in transaction
-    const result = await prisma.$transaction(async (tx) => {
-      const order = await tx.order.findUnique({
-        where: { id: orderId },
-      });
+    const dbClient = await pool.connect();
+    let result;
+    try {
+      await dbClient.query("BEGIN");
+      
+      const orderRes = await dbClient.query('SELECT * FROM "Order" WHERE id = $1', [orderId]);
+      const order = orderRes.rows[0];
 
       if (!order) {
         throw new Error("Order not found");
@@ -34,13 +37,19 @@ export async function POST(req: NextRequest) {
         throw new Error(`Cannot cancel order. Current status: ${order.status}`);
       }
 
-      const updatedOrder = await tx.order.update({
-        where: { id: orderId },
-        data: { status: "CANCELLED", completedAt: new Date() },
-      });
+      const updateRes = await dbClient.query(
+        'UPDATE "Order" SET status = $1, "completedAt" = $2 WHERE id = $3 RETURNING *',
+        ["CANCELLED", new Date(), orderId]
+      );
+      result = updateRes.rows[0];
 
-      return updatedOrder;
-    });
+      await dbClient.query("COMMIT");
+    } catch (txError) {
+      await dbClient.query("ROLLBACK");
+      throw txError;
+    } finally {
+      dbClient.release();
+    }
 
     return NextResponse.json({
       message: "Order cancelled successfully",

@@ -1,5 +1,5 @@
 import { generateSync } from "otplib";
-import { prisma } from "./db";
+import { query } from "./db";
 import { priceStore } from "./priceStore";
 
 interface LoginResponse {
@@ -97,8 +97,12 @@ export async function startLiveFeed(userId: string) {
     }
 
     // 4. Fetch the tokens we want to subscribe to (Watchlist & Holdings)
-    const watchlist = await prisma.watchlist.findMany({ where: { userId } });
-    const holdings = await prisma.holding.findMany({ where: { userId } });
+    const [watchlistRes, holdingsRes] = await Promise.all([
+      query('SELECT token FROM "Watchlist" WHERE "userId" = $1', [userId]),
+      query('SELECT token FROM "Holding" WHERE "userId" = $1', [userId]),
+    ]);
+    const watchlist = watchlistRes.rows;
+    const holdings = holdingsRes.rows;
 
     const subscriptionTokens = Array.from(
       new Set([

@@ -1,4 +1,4 @@
-import { prisma } from "../db";
+import { query } from "../db";
 
 export async function getMarginRequired(
   userId: string,
@@ -12,7 +12,8 @@ export async function validateBalance(
   userId: string,
   requiredMargin: number,
 ): Promise<{ valid: boolean; available: number; message?: string }> {
-  let account = await prisma.paperAccount.findUnique({ where: { userId } });
+  const accountRes = await query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [userId]);
+  let account = accountRes.rows[0];
   if (!account) {
     account = await createAccount(userId);
   }
@@ -29,11 +30,10 @@ export async function validateBalance(
 }
 
 export async function createAccount(userId: string) {
-  return prisma.paperAccount.create({
-    data: {
-      userId,
-      balance: 1000000.0,
-      availableBalance: 1000000.0,
-    },
-  });
+  const uuid = require("crypto").randomUUID();
+  const result = await query(
+    'INSERT INTO "PaperAccount" (id, "userId", balance, "availableBalance", "updatedAt") VALUES ($1, $2, $3, $4, NOW()) RETURNING *',
+    [uuid, userId, 1000000.0, 1000000.0]
+  );
+  return result.rows[0];
 }

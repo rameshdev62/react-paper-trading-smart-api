@@ -1,36 +1,85 @@
-import jwt from "jsonwebtoken";
-
-const JWT_SECRET = process.env.JWT_SECRET || "paper-trading-app-jwt-secret-key-321-123";
+import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
 
 export function signToken(userId: string, email: string): string {
-  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d" });
+  // Returns the userId itself as a fallback token string
+  return userId;
 }
 
 export function verifyToken(token: string): { userId: string; email: string } | null {
-  try {
-    return jwt.verify(token, JWT_SECRET) as { userId: string; email: string };
-  } catch {
-    return null;
+  if (token && token.length >= 32) {
+    return { userId: token, email: "" };
   }
+  return null;
 }
 
 export async function getAuthUser(req: Request): Promise<{ userId: string; email: string } | null> {
+  // 1. Try reading the Supabase session cookie first
+  try {
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            try {
+              cookiesToSet.forEach(({ name, value, options }) =>
+                cookieStore.set(name, value, options)
+              );
+            } catch {
+              // Ignore if called in a server component
+            }
+          },
+        },
+      }
+    );
+
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (user && !error) {
+      return { userId: user.id, email: user.email! };
+    }
+  } catch (err) {
+    console.error("[getAuthUser] Error checking cookie session:", err);
+  }
+
+  // 2. Fallback to Bearer token header if the request specifies it
   const authHeader = req.headers.get("Authorization");
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.split(" ")[1];
-    return verifyToken(token);
+    try {
+      const supabase = createClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (user && !error) {
+        return { userId: user.id, email: user.email! };
+      }
+    } catch (err) {
+      console.error("[getAuthUser] Error checking bearer token:", err);
+    }
   }
 
-  // Fallback to query parameter token for SSE EventSource compatibility
+  // 3. Fallback to query parameter token for SSE EventSource compatibility
   try {
-    const url = new URL(req.url);
+    const url = new URL(req.url, "http://localhost");
     const queryToken = url.searchParams.get("token");
     if (queryToken) {
-      return verifyToken(queryToken);
+      const supabase = createClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const { data: { user }, error } = await supabase.auth.getUser(queryToken);
+      if (user && !error) {
+        return { userId: user.id, email: user.email! };
+      }
     }
-  } catch {
-    // URL parsing might fail if req.url is relative or invalid
-  }
+  } catch {}
 
   return null;
 }

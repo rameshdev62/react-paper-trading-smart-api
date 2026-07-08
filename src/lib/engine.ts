@@ -1,4 +1,4 @@
-import { prisma } from "./db";
+import { pool, query } from "./db";
 import { priceStore } from "./priceStore";
 
 export async function placeOrder(params: {
@@ -23,10 +23,16 @@ export async function placeOrder(params: {
     price = ltp;
   }
 
-  return await prisma.$transaction(async (tx) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
     // Get user to check balance
-    const user = await tx.user.findUnique({ where: { id: userId } });
+    const userRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [userId]);
+    const user = userRes.rows[0];
     if (!user) throw new Error("User not found");
+
+    const orderId = require("crypto").randomUUID();
 
     if (transactionType === "BUY") {
       const requiredMargin = quantity * price;
@@ -35,141 +41,140 @@ export async function placeOrder(params: {
       }
 
       // Create the order record
-      const order = await tx.order.create({
-        data: {
-          userId,
-          symbol,
-          token,
-          exchange,
-          quantity,
-          price,
-          orderType,
-          transactionType,
-          productType,
-          status: orderType === "MARKET" ? "COMPLETED" : "PENDING",
-          completedAt: orderType === "MARKET" ? new Date() : null,
-        },
-      });
+      const isMarket = orderType === "MARKET";
+      const status = isMarket ? "COMPLETED" : "PENDING";
+      const completedAt = isMarket ? new Date() : null;
+
+      const orderInsertRes = await client.query(
+        `INSERT INTO "Order" (id, "userId", symbol, token, exchange, quantity, price, "orderType", "transactionType", "productType", status, "completedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+        [orderId, userId, symbol, token, exchange, quantity, price, orderType, transactionType, productType, status, completedAt]
+      );
+      const order = orderInsertRes.rows[0];
 
       // If market order, execute trade immediately (adjust balance and holdings)
-      if (orderType === "MARKET") {
+      if (isMarket) {
         // Deduct balance
-        await tx.user.update({
-          where: { id: userId },
-          data: { balance: { decrement: requiredMargin } },
-        });
+        await client.query('UPDATE "User" SET balance = balance - $1 WHERE id = $2', [requiredMargin, userId]);
 
         // Add/update holdings
-        const existingHolding = await tx.holding.findUnique({
-          where: { userId_token_exchange: { userId, token, exchange } },
-        });
+        const existingHoldingRes = await client.query(
+          'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
+          [userId, token, exchange]
+        );
+        const existingHolding = existingHoldingRes.rows[0];
 
         if (existingHolding) {
           const newQty = existingHolding.quantity + quantity;
           const newAvgPrice = (existingHolding.averagePrice * existingHolding.quantity + price * quantity) / newQty;
-          await tx.holding.update({
-            where: { id: existingHolding.id },
-            data: { quantity: newQty, averagePrice: parseFloat(newAvgPrice.toFixed(2)) },
-          });
+          await client.query(
+            'UPDATE "Holding" SET quantity = $1, "averagePrice" = $2 WHERE id = $3',
+            [newQty, parseFloat(newAvgPrice.toFixed(2)), existingHolding.id]
+          );
         } else {
-          await tx.holding.create({
-            data: { userId, symbol, token, exchange, quantity, averagePrice: price },
-          });
+          const holdingId = require("crypto").randomUUID();
+          await client.query(
+            'INSERT INTO "Holding" (id, "userId", symbol, token, exchange, quantity, "averagePrice") VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [holdingId, userId, symbol, token, exchange, quantity, price]
+          );
         }
 
         // Log portfolio history
-        const updatedUser = await tx.user.findUnique({ where: { id: userId } });
-        const holdings = await tx.holding.findMany({ where: { userId } });
+        const updatedUserRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [userId]);
+        const updatedUser = updatedUserRes.rows[0];
+
+        const holdingsRes = await client.query('SELECT * FROM "Holding" WHERE "userId" = $1', [userId]);
+        const holdings = holdingsRes.rows;
+
         let holdingsVal = 0;
         for (const h of holdings) {
           const hLtp = priceStore.getPrice(h.token).ltp;
           holdingsVal += h.quantity * hLtp;
         }
-        await tx.portfolioHistory.create({
-          data: {
-            userId,
-            cashBalance: updatedUser!.balance,
-            totalValue: updatedUser!.balance + holdingsVal,
-          },
-        });
+
+        const historyId = require("crypto").randomUUID();
+        await client.query(
+          'INSERT INTO "PortfolioHistory" (id, "userId", "cashBalance", "totalValue") VALUES ($1, $2, $3, $4)',
+          [historyId, userId, updatedUser.balance, updatedUser.balance + holdingsVal]
+        );
       }
 
+      await client.query("COMMIT");
       return order;
     } else {
       // transactionType === "SELL"
       // Verify holdings
-      const holding = await tx.holding.findUnique({
-        where: { userId_token_exchange: { userId, token, exchange } },
-      });
+      const holdingRes = await client.query(
+        'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
+        [userId, token, exchange]
+      );
+      const holding = holdingRes.rows[0];
 
       if (!holding || holding.quantity < quantity) {
         throw new Error(`Insufficient shares in holdings to sell. Have: ${holding ? holding.quantity : 0}, Selling: ${quantity}`);
       }
 
       // Create order record
-      const order = await tx.order.create({
-        data: {
-          userId,
-          symbol,
-          token,
-          exchange,
-          quantity,
-          price,
-          orderType,
-          transactionType,
-          productType,
-          status: orderType === "MARKET" ? "COMPLETED" : "PENDING",
-          completedAt: orderType === "MARKET" ? new Date() : null,
-        },
-      });
+      const isMarket = orderType === "MARKET";
+      const status = isMarket ? "COMPLETED" : "PENDING";
+      const completedAt = isMarket ? new Date() : null;
+
+      const orderInsertRes = await client.query(
+        `INSERT INTO "Order" (id, "userId", symbol, token, exchange, quantity, price, "orderType", "transactionType", "productType", status, "completedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+        [orderId, userId, symbol, token, exchange, quantity, price, orderType, transactionType, productType, status, completedAt]
+      );
+      const order = orderInsertRes.rows[0];
 
       // If market order, execute trade immediately
-      if (orderType === "MARKET") {
+      if (isMarket) {
         const proceeds = quantity * price;
 
         // Add balance
-        await tx.user.update({
-          where: { id: userId },
-          data: { balance: { increment: proceeds } },
-        });
+        await client.query('UPDATE "User" SET balance = balance + $1 WHERE id = $2', [proceeds, userId]);
 
         // Decrement/delete holding
         if (holding.quantity === quantity) {
-          await tx.holding.delete({ where: { id: holding.id } });
+          await client.query('DELETE FROM "Holding" WHERE id = $1', [holding.id]);
         } else {
-          await tx.holding.update({
-            where: { id: holding.id },
-            data: { quantity: { decrement: quantity } },
-          });
+          await client.query('UPDATE "Holding" SET quantity = quantity - $1 WHERE id = $2', [quantity, holding.id]);
         }
 
         // Log portfolio history
-        const updatedUser = await tx.user.findUnique({ where: { id: userId } });
-        const holdings = await tx.holding.findMany({ where: { userId } });
+        const updatedUserRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [userId]);
+        const updatedUser = updatedUserRes.rows[0];
+
+        const holdingsRes = await client.query('SELECT * FROM "Holding" WHERE "userId" = $1', [userId]);
+        const holdings = holdingsRes.rows;
+
         let holdingsVal = 0;
         for (const h of holdings) {
           const hLtp = priceStore.getPrice(h.token).ltp;
           holdingsVal += h.quantity * hLtp;
         }
-        await tx.portfolioHistory.create({
-          data: {
-            userId,
-            cashBalance: updatedUser!.balance,
-            totalValue: updatedUser!.balance + holdingsVal,
-          },
-        });
+
+        const historyId = require("crypto").randomUUID();
+        await client.query(
+          'INSERT INTO "PortfolioHistory" (id, "userId", "cashBalance", "totalValue") VALUES ($1, $2, $3, $4)',
+          [historyId, userId, updatedUser.balance, updatedUser.balance + holdingsVal]
+        );
       }
 
+      await client.query("COMMIT");
       return order;
     }
-  });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function processPendingOrders() {
   try {
-    const pendingOrders = await prisma.order.findMany({
-      where: { status: "PENDING" },
-    });
+    const pendingOrdersRes = await query('SELECT * FROM "Order" WHERE status = \'PENDING\'');
+    const pendingOrders = pendingOrdersRes.rows;
 
     if (pendingOrders.length === 0) return;
 
@@ -207,115 +212,128 @@ export async function processPendingOrders() {
 }
 
 async function executePendingOrder(orderId: string, fillPrice: number) {
-  return await prisma.$transaction(async (tx) => {
-    const order = await tx.order.findUnique({ where: { id: orderId } });
-    if (!order || order.status !== "PENDING") return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-    const user = await tx.user.findUnique({ where: { id: order.userId } });
-    if (!user) return;
+    const orderRes = await client.query('SELECT * FROM "Order" WHERE id = $1', [orderId]);
+    const order = orderRes.rows[0];
+    if (!order || order.status !== "PENDING") {
+      await client.query("ROLLBACK");
+      return;
+    }
+
+    const userRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [order.userId]);
+    const user = userRes.rows[0];
+    if (!user) {
+      await client.query("ROLLBACK");
+      return;
+    }
 
     if (order.transactionType === "BUY") {
       const requiredMargin = order.quantity * fillPrice;
       if (user.balance < requiredMargin) {
         // Cancel / reject order due to insufficient margin on trigger
-        await tx.order.update({
-          where: { id: orderId },
-          data: { status: "REJECTED", rejectReason: "Insufficient funds on order trigger" },
-        });
+        await client.query(
+          'UPDATE "Order" SET status = \'REJECTED\', "rejectReason" = $1 WHERE id = $2',
+          ["Insufficient funds on order trigger", orderId]
+        );
+        await client.query("COMMIT");
         return;
       }
 
       // Update user balance
-      await tx.user.update({
-        where: { id: order.userId },
-        data: { balance: { decrement: requiredMargin } },
-      });
+      await client.query('UPDATE "User" SET balance = balance - $1 WHERE id = $2', [requiredMargin, order.userId]);
 
       // Update/Create holding
-      const existingHolding = await tx.holding.findUnique({
-        where: { userId_token_exchange: { userId: order.userId, token: order.token, exchange: order.exchange } },
-      });
+      const existingHoldingRes = await client.query(
+        'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
+        [order.userId, order.token, order.exchange]
+      );
+      const existingHolding = existingHoldingRes.rows[0];
 
       if (existingHolding) {
         const newQty = existingHolding.quantity + order.quantity;
         const newAvgPrice = (existingHolding.averagePrice * existingHolding.quantity + fillPrice * order.quantity) / newQty;
-        await tx.holding.update({
-          where: { id: existingHolding.id },
-          data: { quantity: newQty, averagePrice: parseFloat(newAvgPrice.toFixed(2)) },
-        });
+        await client.query(
+          'UPDATE "Holding" SET quantity = $1, "averagePrice" = $2 WHERE id = $3',
+          [newQty, parseFloat(newAvgPrice.toFixed(2)), existingHolding.id]
+        );
       } else {
-        await tx.holding.create({
-          data: {
-            userId: order.userId,
-            symbol: order.symbol,
-            token: order.token,
-            exchange: order.exchange,
-            quantity: order.quantity,
-            averagePrice: fillPrice,
-          },
-        });
+        const holdingId = require("crypto").randomUUID();
+        await client.query(
+          'INSERT INTO "Holding" (id, "userId", symbol, token, exchange, quantity, "averagePrice") VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [holdingId, order.userId, order.symbol, order.token, order.exchange, order.quantity, fillPrice]
+        );
       }
 
       // Update order status
-      await tx.order.update({
-        where: { id: orderId },
-        data: { status: "COMPLETED", price: fillPrice, completedAt: new Date() },
-      });
+      await client.query(
+        'UPDATE "Order" SET status = \'COMPLETED\', price = $1, "completedAt" = $2 WHERE id = $3',
+        [fillPrice, new Date(), orderId]
+      );
     } else {
       // transactionType === "SELL"
-      const holding = await tx.holding.findUnique({
-        where: { userId_token_exchange: { userId: order.userId, token: order.token, exchange: order.exchange } },
-      });
+      const holdingRes = await client.query(
+        'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
+        [order.userId, order.token, order.exchange]
+      );
+      const holding = holdingRes.rows[0];
 
       if (!holding || holding.quantity < order.quantity) {
-        await tx.order.update({
-          where: { id: orderId },
-          data: { status: "REJECTED", rejectReason: "Insufficient shares held on order trigger" },
-        });
+        await client.query(
+          'UPDATE "Order" SET status = \'REJECTED\', "rejectReason" = $1 WHERE id = $2',
+          ["Insufficient shares held on order trigger", orderId]
+        );
+        await client.query("COMMIT");
         return;
       }
 
       const proceeds = order.quantity * fillPrice;
 
       // Update user balance
-      await tx.user.update({
-        where: { id: order.userId },
-        data: { balance: { increment: proceeds } },
-      });
+      await client.query('UPDATE "User" SET balance = balance + $1 WHERE id = $2', [proceeds, order.userId]);
 
       // Decrement or delete holding
       if (holding.quantity === order.quantity) {
-        await tx.holding.delete({ where: { id: holding.id } });
+        await client.query('DELETE FROM "Holding" WHERE id = $1', [holding.id]);
       } else {
-        await tx.holding.update({
-          where: { id: holding.id },
-          data: { quantity: { decrement: order.quantity } },
-        });
+        await client.query('UPDATE "Holding" SET quantity = quantity - $1 WHERE id = $2', [order.quantity, holding.id]);
       }
 
       // Update order status
-      await tx.order.update({
-        where: { id: orderId },
-        data: { status: "COMPLETED", price: fillPrice, completedAt: new Date() },
-      });
+      await client.query(
+        'UPDATE "Order" SET status = \'COMPLETED\', price = $1, "completedAt" = $2 WHERE id = $3',
+        [fillPrice, new Date(), orderId]
+      );
     }
 
     // Update portfolio value log
-    const updatedUser = await tx.user.findUnique({ where: { id: order.userId } });
-    const holdings = await tx.holding.findMany({ where: { userId: order.userId } });
+    const updatedUserRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [order.userId]);
+    const updatedUser = updatedUserRes.rows[0];
+
+    const holdingsRes = await client.query('SELECT * FROM "Holding" WHERE "userId" = $1', [order.userId]);
+    const holdings = holdingsRes.rows;
+
     let holdingsVal = 0;
     for (const h of holdings) {
       const hLtp = priceStore.getPrice(h.token).ltp;
       holdingsVal += h.quantity * hLtp;
     }
-    await tx.portfolioHistory.create({
-      data: {
-        userId: order.userId,
-        cashBalance: updatedUser!.balance,
-        totalValue: updatedUser!.balance + holdingsVal,
-      },
-    });
-  });
+
+    const historyId = require("crypto").randomUUID();
+    await client.query(
+      'INSERT INTO "PortfolioHistory" (id, "userId", "cashBalance", "totalValue") VALUES ($1, $2, $3, $4)',
+      [historyId, order.userId, updatedUser.balance, updatedUser.balance + holdingsVal]
+    );
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[OrderEngine] Error executing pending order transaction:", err);
+  } finally {
+    client.release();
+  }
 }
 
 // Subscribe to price store to run order matching on every price tick

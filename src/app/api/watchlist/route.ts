@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -18,25 +18,24 @@ export async function GET(req: NextRequest) {
     const groupsOnly = searchParams.get("groups");
 
     if (groupsOnly === "true") {
-      const result = await prisma.watchlist.groupBy({
-        by: ["group"],
-        where: { userId: user.userId },
-        _count: { group: true },
-        orderBy: { group: "asc" },
-      });
-      const groups = result.map((r) => ({ name: r.group, count: r._count.group }));
+      const result = await query(
+        'SELECT "group", COUNT(*) as count FROM "Watchlist" WHERE "userId" = $1 GROUP BY "group" ORDER BY "group" ASC',
+        [user.userId]
+      );
+      const groups = result.rows.map((r) => ({ name: r.group, count: parseInt(r.count, 10) }));
       return NextResponse.json(groups);
     }
 
-    const where: any = { userId: user.userId };
+    let queryText = 'SELECT * FROM "Watchlist" WHERE "userId" = $1';
+    const params = [user.userId];
     if (group) {
-      where.group = group;
+      queryText += ' AND "group" = $2';
+      params.push(group);
     }
+    queryText += ' ORDER BY "addedAt" DESC';
 
-    const watchlist = await prisma.watchlist.findMany({
-      where,
-      orderBy: { addedAt: "desc" },
-    });
+    const result = await query(queryText, params);
+    const watchlist = result.rows;
 
     return NextResponse.json(watchlist);
   } catch (error: any) {
@@ -59,25 +58,18 @@ export async function POST(req: NextRequest) {
     }
 
     const targetGroup = group || "Default";
+    const uuid = require("crypto").randomUUID();
 
-    const item = await prisma.watchlist.upsert({
-      where: {
-        userId_token_exchange_group: {
-          userId: user.userId,
-          token,
-          exchange,
-          group: targetGroup,
-        },
-      },
-      update: {},
-      create: {
-        userId: user.userId,
-        symbol,
-        token,
-        exchange,
-        group: targetGroup,
-      },
-    });
+    const upsertQuery = `
+      INSERT INTO "Watchlist" (id, "userId", symbol, token, exchange, "group")
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT ("userId", token, exchange, "group")
+      DO UPDATE SET symbol = EXCLUDED.symbol
+      RETURNING *
+    `;
+
+    const result = await query(upsertQuery, [uuid, user.userId, symbol, token, exchange, targetGroup]);
+    const item = result.rows[0];
 
     // Lazy-initialize the new token in the price cache
     const { priceStore } = require("@/lib/priceStore");
@@ -115,16 +107,11 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Missing token or exchange parameter" }, { status: 400 });
     }
 
-    await prisma.watchlist.delete({
-      where: {
-        userId_token_exchange_group: {
-          userId: user.userId,
-          token,
-          exchange,
-          group,
-        },
-      },
-    });
+    const deleteQuery = `
+      DELETE FROM "Watchlist"
+      WHERE "userId" = $1 AND token = $2 AND exchange = $3 AND "group" = $4
+    `;
+    await query(deleteQuery, [user.userId, token, exchange, group]);
 
     if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
       const { startLiveFeed } = require("@/lib/smartapi");

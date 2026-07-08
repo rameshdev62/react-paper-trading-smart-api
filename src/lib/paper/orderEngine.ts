@@ -1,5 +1,5 @@
-import { prisma } from "../db";
-import { validateBalance } from "./margin";
+import { pool, query } from "../db";
+import { validateBalance, createAccount } from "./margin";
 import { calculateCharges } from "./brokerage";
 import { priceStore } from "../priceStore";
 
@@ -22,11 +22,10 @@ export async function placeOrder(input: PlaceOrderInput) {
   } = input;
 
   // 1. Ensure account exists
-  let account = await prisma.paperAccount.findUnique({ where: { userId } });
+  const accountRes = await query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [userId]);
+  let account = accountRes.rows[0];
   if (!account) {
-    account = await prisma.paperAccount.create({
-      data: { userId, balance: 1000000.0, availableBalance: 1000000.0 },
-    });
+    account = await createAccount(userId);
   }
 
   // 2. Validate basic fields
@@ -35,20 +34,13 @@ export async function placeOrder(input: PlaceOrderInput) {
   }
 
   // 3. Create a PENDING order
-  const order = await prisma.paperOrder.create({
-    data: {
-      userId,
-      symbol,
-      exchange,
-      instrument,
-      side,
-      orderType,
-      quantity,
-      price,
-      triggerPrice,
-      status: "PENDING",
-    },
-  });
+  const orderId = require("crypto").randomUUID();
+  const orderRes = await query(
+    `INSERT INTO "PaperOrder" (id, "userId", symbol, exchange, instrument, side, "orderType", quantity, price, "triggerPrice", status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING') RETURNING *`,
+    [orderId, userId, symbol, exchange, instrument, side, orderType, quantity, price, triggerPrice || null]
+  );
+  const order = orderRes.rows[0];
 
   // 4. For MARKET orders, get live price and execute immediately
   if (orderType === "MARKET") {
@@ -56,16 +48,14 @@ export async function placeOrder(input: PlaceOrderInput) {
   }
 
   // For LIMIT / SL / SL-M — mark as OPEN, will be matched by engine loop
-  await prisma.paperOrder.update({
-    where: { id: order.id },
-    data: { status: "OPEN" },
-  });
+  await query('UPDATE "PaperOrder" SET status = \'OPEN\' WHERE id = $1', [order.id]);
 
   return { success: true, orderId: order.id, status: "OPEN" };
 }
 
 export async function executeOrder(orderId: string, fillPrice?: number) {
-  const order = await prisma.paperOrder.findUnique({ where: { id: orderId } });
+  const orderRes = await query('SELECT * FROM "PaperOrder" WHERE id = $1', [orderId]);
+  const order = orderRes.rows[0];
   if (!order) throw new Error("Order not found");
 
   const livePrice = fillPrice || await getLivePriceBySymbol(order.symbol);
@@ -86,15 +76,11 @@ export async function executeOrder(orderId: string, fillPrice?: number) {
 
   // For SELL orders, validate position exists
   if (order.side === "SELL") {
-    const position = await prisma.paperPosition.findUnique({
-      where: {
-        userId_symbol_exchange: {
-          userId: order.userId,
-          symbol: order.symbol,
-          exchange: order.exchange,
-        },
-      },
-    });
+    const positionRes = await query(
+      'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND symbol = $2 AND exchange = $3',
+      [order.userId, order.symbol, order.exchange]
+    );
+    const position = positionRes.rows[0];
     const availableQty = position ? position.netQty : 0;
     if (availableQty < order.quantity) {
       return rejectOrder(orderId, `Insufficient position. Available: ${availableQty}, Required: ${order.quantity}`);
@@ -106,87 +92,81 @@ export async function executeOrder(orderId: string, fillPrice?: number) {
   const charges = calculateCharges(tradeValue);
 
   // Execute — create trade, update position, update balance
-  await prisma.$transaction(async (tx) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
     // Create trade record
-    await tx.paperTrade.create({
-      data: {
-        orderId: order.id,
-        userId: order.userId,
-        symbol: order.symbol,
-        side: order.side,
-        price: executionPrice,
-        qty: order.quantity,
-      },
-    });
+    const tradeId = require("crypto").randomUUID();
+    await client.query(
+      'INSERT INTO "PaperTrade" (id, "orderId", "userId", symbol, side, price, qty) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [tradeId, order.id, order.userId, order.symbol, order.side, executionPrice, order.quantity]
+    );
 
     // Update position
-    await updatePosition(tx, order.userId, order.symbol, order.exchange, order.side, order.quantity, executionPrice);
+    await updatePosition(client, order.userId, order.symbol, order.exchange, order.side, order.quantity, executionPrice);
 
     // Update account balance
-    const account = await tx.paperAccount.findUnique({ where: { userId: order.userId } });
+    const accountRes = await client.query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [order.userId]);
+    const account = accountRes.rows[0];
     if (!account) throw new Error("Account not found");
+
+    const transactionId = require("crypto").randomUUID();
 
     if (order.side === "BUY") {
       const totalCost = tradeValue + charges.total;
-      await tx.paperAccount.update({
-        where: { userId: order.userId },
-        data: {
-          usedMargin: { increment: totalCost },
-          availableBalance: { decrement: totalCost },
-          balance: { decrement: totalCost },
-          realizedPnl: { decrement: charges.total },
-          totalPnl: { decrement: charges.total },
-        },
-      });
-      await tx.paperTransaction.create({
-        data: {
-          userId: order.userId,
-          type: "ORDER_DEBIT",
-          amount: totalCost,
-          description: `Buy ${order.quantity} ${order.symbol} @ ${executionPrice}`,
-          balanceAfter: account.balance - totalCost,
-        },
-      });
+      await client.query(
+        `UPDATE "PaperAccount"
+         SET "usedMargin" = "usedMargin" + $1,
+             "availableBalance" = "availableBalance" - $1,
+             balance = balance - $1,
+             "realizedPnl" = "realizedPnl" - $2,
+             "totalPnl" = "totalPnl" - $2
+         WHERE "userId" = $3`,
+        [totalCost, charges.total, order.userId]
+      );
+      await client.query(
+        `INSERT INTO "PaperTransaction" (id, "userId", type, amount, description, "balanceAfter")
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [transactionId, order.userId, "ORDER_DEBIT", totalCost, `Buy ${order.quantity} ${order.symbol} @ ${executionPrice}`, account.balance - totalCost]
+      );
     } else {
       const totalCredit = tradeValue - charges.total;
-      await tx.paperAccount.update({
-        where: { userId: order.userId },
-        data: {
-          usedMargin: { decrement: order.quantity * executionPrice },
-          availableBalance: { increment: totalCredit },
-          balance: { increment: totalCredit },
-        },
-      });
-      await tx.paperTransaction.create({
-        data: {
-          userId: order.userId,
-          type: "ORDER_CREDIT",
-          amount: totalCredit,
-          description: `Sell ${order.quantity} ${order.symbol} @ ${executionPrice}`,
-          balanceAfter: account.balance + totalCredit,
-        },
-      });
+      await client.query(
+        `UPDATE "PaperAccount"
+         SET "usedMargin" = "usedMargin" - $1,
+             "availableBalance" = "availableBalance" + $2,
+             balance = balance + $2
+         WHERE "userId" = $3`,
+        [order.quantity * executionPrice, totalCredit, order.userId]
+      );
+      await client.query(
+        `INSERT INTO "PaperTransaction" (id, "userId", type, amount, description, "balanceAfter")
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [transactionId, order.userId, "ORDER_CREDIT", totalCredit, `Sell ${order.quantity} ${order.symbol} @ ${executionPrice}`, account.balance + totalCredit]
+      );
     }
-  });
+
+    await client.query("COMMIT");
+  } catch (txErr) {
+    await client.query("ROLLBACK");
+    throw txErr;
+  } finally {
+    client.release();
+  }
 
   // Mark order as FILLED (or EXECUTED for paper simulator)
-  await prisma.paperOrder.update({
-    where: { id: order.id },
-    data: {
-      status: "FILLED",
-      filledQty: order.quantity,
-      averagePrice: executionPrice,
-    },
-  });
+  await query(
+    'UPDATE "PaperOrder" SET status = \'FILLED\', "filledQty" = $1, "averagePrice" = $2 WHERE id = $3',
+    [order.quantity, executionPrice, order.id]
+  );
 
   return { success: true, orderId: order.id, status: "FILLED", price: executionPrice };
 }
 
 async function getLivePriceBySymbol(symbol: string): Promise<number> {
-  const inst = await prisma.instrument.findFirst({
-    where: { symbol },
-    select: { token: true },
-  });
+  const instRes = await query('SELECT token FROM "Instrument" WHERE symbol = $1 LIMIT 1', [symbol]);
+  const inst = instRes.rows[0];
   if (inst) {
     const priceInfo = priceStore.getPrice(inst.token);
     return priceInfo ? priceInfo.ltp : 0;
@@ -194,16 +174,16 @@ async function getLivePriceBySymbol(symbol: string): Promise<number> {
   return 0;
 }
 
-async function rejectOrder(orderId: string, reason: string) {
+export async function rejectOrder(orderId: string, reason: string) {
   // If the ID is a user UUID (from placeOrder fallback), skip updating DB
   if (orderId.length > 36) {
     return { success: false, orderId, status: "REJECTED", reason };
   }
   try {
-    await prisma.paperOrder.update({
-      where: { id: orderId },
-      data: { status: "REJECTED", rejectReason: reason },
-    });
+    await query(
+      'UPDATE "PaperOrder" SET status = \'REJECTED\', "rejectReason" = $1 WHERE id = $2',
+      [reason, orderId]
+    );
   } catch {
     // Ignore db write failure if order record doesn't exist
   }
@@ -219,9 +199,11 @@ async function updatePosition(
   qty: number,
   price: number,
 ) {
-  const existing = await tx.paperPosition.findUnique({
-    where: { userId_symbol_exchange: { userId, symbol, exchange } },
-  });
+  const existingRes = await tx.query(
+    'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND symbol = $2 AND exchange = $3',
+    [userId, symbol, exchange]
+  );
+  const existing = existingRes.rows[0];
 
   if (existing) {
     const newBuyQty = existing.buyQty + (side === "BUY" ? qty : 0);
@@ -243,49 +225,46 @@ async function updatePosition(
       newRealizedPnl += sellPnl;
     }
 
-    await tx.paperPosition.update({
-      where: { id: existing.id },
-      data: {
-        buyQty: newBuyQty,
-        sellQty: newSellQty,
-        netQty: newNetQty,
-        avgBuyPrice: newAvgBuy,
-        avgSellPrice: newAvgSell,
-        invested: newInvested,
-        realizedPnl: newRealizedPnl,
-      },
-    });
+    await tx.query(
+      `UPDATE "PaperPosition"
+       SET "buyQty" = $1, "sellQty" = $2, "netQty" = $3,
+           "avgBuyPrice" = $4, "avgSellPrice" = $5,
+           invested = $6, "realizedPnl" = $7
+       WHERE id = $8`,
+      [newBuyQty, newSellQty, newNetQty, newAvgBuy, newAvgSell, newInvested, newRealizedPnl, existing.id]
+    );
   } else {
-    await tx.paperPosition.create({
-      data: {
-        userId,
-        symbol,
-        exchange,
-        buyQty: side === "BUY" ? qty : 0,
-        sellQty: side === "SELL" ? qty : 0,
-        netQty: side === "BUY" ? qty : -qty,
-        avgBuyPrice: side === "BUY" ? price : 0,
-        avgSellPrice: side === "SELL" ? price : 0,
-        invested: side === "BUY" ? price * qty : 0,
-        marketValue: price * qty,
-      },
-    });
+    const positionId = require("crypto").randomUUID();
+    await tx.query(
+      `INSERT INTO "PaperPosition" (id, "userId", symbol, exchange, "buyQty", "sellQty", "netQty", "avgBuyPrice", "avgSellPrice", invested, "marketValue")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        positionId, userId, symbol, exchange,
+        side === "BUY" ? qty : 0,
+        side === "SELL" ? qty : 0,
+        side === "BUY" ? qty : -qty,
+        side === "BUY" ? price : 0,
+        side === "SELL" ? price : 0,
+        side === "BUY" ? price * qty : 0,
+        price * qty
+      ]
+    );
   }
 }
 
 export async function processPendingPaperOrders() {
   try {
-    const openOrders = await prisma.paperOrder.findMany({
-      where: { status: "OPEN" },
-    });
+    const openOrdersRes = await query('SELECT * FROM "PaperOrder" WHERE status = \'OPEN\'');
+    const openOrders = openOrdersRes.rows;
 
     if (openOrders.length === 0) return;
 
     for (const order of openOrders) {
-      const inst = await prisma.instrument.findFirst({
-        where: { symbol: order.symbol },
-        select: { token: true },
-      });
+      const instRes = await query(
+        'SELECT token FROM "Instrument" WHERE symbol = $1 LIMIT 1',
+        [order.symbol]
+      );
+      const inst = instRes.rows[0];
       if (!inst) continue;
 
       const currentPrice = priceStore.getPrice(inst.token);

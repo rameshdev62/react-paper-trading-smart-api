@@ -1,27 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { query as dbQuery } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const searchParams = req.nextUrl.searchParams;
-    const query = searchParams.get("query") || "";
+    const queryStr = searchParams.get("query") || "";
 
-    if (query.trim().length < 2) {
+    if (queryStr.trim().length < 2) {
       return NextResponse.json([]);
     }
 
     // Query our cached Instrument Master table
-    const instruments = await prisma.instrument.findMany({
-      where: {
-        OR: [
-          { symbol: { contains: query } },
-          { name: { contains: query } },
-        ],
-      },
-      take: 10,
-    });
+    const result = await dbQuery(
+      'SELECT * FROM "Instrument" WHERE symbol ILIKE $1 OR name ILIKE $2 LIMIT 10',
+      [`%${queryStr}%`, `%${queryStr}%`]
+    );
+    const instruments = result.rows;
 
     return NextResponse.json(instruments);
   } catch (error: any) {

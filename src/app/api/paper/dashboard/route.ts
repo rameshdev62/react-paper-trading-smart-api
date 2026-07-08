@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
+import { createAccount } from "@/lib/paper/margin";
 
 export const dynamic = "force-dynamic";
 
@@ -11,32 +12,32 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const account = await prisma.paperAccount.findUnique({
-      where: { userId: user.userId },
-    });
+    const accountRes = await query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [user.userId]);
+    let account = accountRes.rows[0];
+    if (!account) {
+      account = await createAccount(user.userId);
+    }
 
-    const positions = await prisma.paperPosition.findMany({
-      where: { userId: user.userId, netQty: { not: 0 } },
-    });
+    const positionsRes = await query(
+      'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND "netQty" <> 0',
+      [user.userId]
+    );
+    const positions = positionsRes.rows;
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const todaysTrades = await prisma.paperTrade.findMany({
-      where: {
-        userId: user.userId,
-        tradeTime: { gte: todayStart },
-      },
-      orderBy: { tradeTime: "desc" },
-    });
+    const tradesRes = await query(
+      'SELECT * FROM "PaperTrade" WHERE "userId" = $1 AND "tradeTime" >= $2 ORDER BY "tradeTime" DESC',
+      [user.userId, todayStart]
+    );
+    const todaysTrades = tradesRes.rows;
 
-    const openOrders = await prisma.paperOrder.findMany({
-      where: {
-        userId: user.userId,
-        status: { in: ["PENDING", "OPEN"] },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const ordersRes = await query(
+      'SELECT * FROM "PaperOrder" WHERE "userId" = $1 AND status IN (\'PENDING\', \'OPEN\') ORDER BY "createdAt" DESC',
+      [user.userId]
+    );
+    const openOrders = ordersRes.rows;
 
     return NextResponse.json({
       account,

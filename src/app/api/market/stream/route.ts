@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { priceStore } from "@/lib/priceStore";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -13,16 +13,12 @@ export async function GET(req: NextRequest) {
 
   // Query watchlist & holdings to lazy-initialize their prices in the central price cache
   try {
-    const [watchlist, holdings] = await Promise.all([
-      prisma.watchlist.findMany({
-        where: { userId: user.userId },
-        select: { token: true },
-      }),
-      prisma.holding.findMany({
-        where: { userId: user.userId },
-        select: { token: true },
-      }),
+    const [watchlistRes, holdingsRes] = await Promise.all([
+      query('SELECT token FROM "Watchlist" WHERE "userId" = $1', [user.userId]),
+      query('SELECT token FROM "Holding" WHERE "userId" = $1', [user.userId]),
     ]);
+    const watchlist = watchlistRes.rows;
+    const holdings = holdingsRes.rows;
 
     const allUserTokens = new Set([
       ...watchlist.map((w) => w.token),

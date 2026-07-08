@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +24,10 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Cannot delete the Default group" }, { status: 400 });
     }
 
-    await prisma.watchlist.deleteMany({
-      where: {
-        userId: user.userId,
-        group,
-      },
-    });
+    await query(
+      'DELETE FROM "Watchlist" WHERE "userId" = $1 AND "group" = $2',
+      [user.userId, group]
+    );
 
     if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
       const { startLiveFeed } = require("@/lib/smartapi");

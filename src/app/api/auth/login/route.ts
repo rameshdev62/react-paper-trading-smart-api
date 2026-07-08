@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
-import { prisma } from "@/lib/db";
-import { signToken } from "@/lib/auth";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { query } from "@/lib/db";
 
 export async function POST(req: Request) {
   try {
@@ -11,32 +11,59 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
     }
 
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { email },
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            try {
+              cookiesToSet.forEach(({ name, value, options }) =>
+                cookieStore.set(name, value, options)
+              );
+            } catch {}
+          },
+        },
+      }
+    );
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
 
-    if (!user) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+    if (error || !data.user) {
+      return NextResponse.json({ error: error?.message || "Invalid email or password" }, { status: 401 });
     }
 
-    // Verify password
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
-    if (!isMatch) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
-    }
+    // Look up or auto-provision user record in public."User" table
+    const userRes = await query('SELECT * FROM "User" WHERE email = $1', [email]);
+    let dbUser = userRes.rows[0];
 
-    // Create session token
-    const token = signToken(user.id, user.email);
+    if (!dbUser) {
+      // Auto-provision user in public."User" table
+      const uuid = data.user.id;
+      const name = data.user.user_metadata?.full_name || email.split("@")[0];
+      const insertRes = await query(
+        `INSERT INTO "User" (id, email, "passwordHash", name, balance, "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING *`,
+        [uuid, email, "", name, 1000000.0]
+      );
+      dbUser = insertRes.rows[0];
+    }
 
     return NextResponse.json({
       message: "Login successful",
-      token,
+      token: data.session?.access_token || "",
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        balance: user.balance,
+        id: dbUser.id,
+        name: dbUser.name,
+        email: dbUser.email,
+        balance: dbUser.balance,
       },
     });
   } catch (error: any) {

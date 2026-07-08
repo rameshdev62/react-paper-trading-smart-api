@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -11,18 +11,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status");
+    const status = req.nextUrl.searchParams.get("status");
 
-    const where: any = { userId: user.userId };
+    let queryText = 'SELECT * FROM "PaperOrder" WHERE "userId" = $1';
+    const params = [user.userId];
     if (status) {
-      where.status = status;
+      queryText += ' AND status = $2';
+      params.push(status);
     }
+    queryText += ' ORDER BY "createdAt" DESC';
 
-    const orders = await prisma.paperOrder.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-    });
+    const result = await query(queryText, params);
+    const orders = result.rows;
 
     const mapped = orders.map((o) => ({
       id: o.id,

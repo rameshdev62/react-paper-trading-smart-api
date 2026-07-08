@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 import { placeOrder } from "@/lib/paper/orderEngine";
 
 export const dynamic = "force-dynamic";
@@ -35,16 +35,11 @@ export async function POST(req: NextRequest) {
 
     const targetSymbol = symbol.trim().toUpperCase();
 
-    // Query Instrument Master table to find the token and segment
-    let dbInstrument = await prisma.instrument.findFirst({
-      where: {
-        OR: [
-          { symbol: targetSymbol },
-          { symbol: targetSymbol + "-EQ" },
-          { name: targetSymbol },
-        ],
-      },
-    });
+    const instResult = await query(
+      'SELECT * FROM "Instrument" WHERE symbol = $1 OR symbol = $2 OR name = $3 LIMIT 1',
+      [targetSymbol, targetSymbol + "-EQ", targetSymbol]
+    );
+    let dbInstrument = instResult.rows[0];
 
     if (!dbInstrument) {
       // Fallback

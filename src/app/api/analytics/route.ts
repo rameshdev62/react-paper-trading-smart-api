@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +15,17 @@ export async function GET(req: NextRequest) {
     const userId = user.userId;
 
     // Fetch all required data in parallel
-    const [dbUser, orders, holdings, history] = await Promise.all([
-      prisma.user.findUnique({ where: { id: userId }, select: { balance: true } }),
-      prisma.order.findMany({ where: { userId }, orderBy: { createdAt: "desc" } }),
-      prisma.holding.findMany({ where: { userId } }),
-      prisma.portfolioHistory.findMany({ where: { userId }, orderBy: { timestamp: "asc" } }),
+    const [userRes, ordersRes, holdingsRes, historyRes] = await Promise.all([
+      query('SELECT balance FROM "User" WHERE id = $1', [userId]),
+      query('SELECT * FROM "Order" WHERE "userId" = $1 ORDER BY "createdAt" DESC', [userId]),
+      query('SELECT * FROM "Holding" WHERE "userId" = $1', [userId]),
+      query('SELECT * FROM "PortfolioHistory" WHERE "userId" = $1 ORDER BY timestamp ASC', [userId]),
     ]);
+
+    const dbUser = userRes.rows[0];
+    const orders = ordersRes.rows;
+    const holdings = holdingsRes.rows;
+    const history = historyRes.rows;
 
     if (!dbUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });

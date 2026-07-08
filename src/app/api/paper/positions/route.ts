@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { query } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -11,9 +11,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const positions = await prisma.paperPosition.findMany({
-      where: { userId: user.userId, netQty: { not: 0 } },
-    });
+    const result = await query(
+      'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND "netQty" <> 0',
+      [user.userId]
+    );
+    const positions = result.rows;
 
     const mapped = positions.map((pos) => ({
       id: pos.id,
