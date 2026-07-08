@@ -2,6 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
+const supabaseUrl = process.env.SUPABASE_URL || "https://jzfecbakzecdlqyflnxt.supabase.co";
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp6ZmVjYmFremVjZGxxeWZsbnh0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1MjIxMzAsImV4cCI6MjA5OTA5ODEzMH0.lF6h0yEh_EFOtjSCC2I-B9W-EkpW7gJUN7ae3OrSvMk";
+
 export function signToken(userId: string, email: string): string {
   // Returns the userId itself as a fallback token string
   return userId;
@@ -19,8 +22,8 @@ export async function getAuthUser(req: Request): Promise<{ userId: string; email
   try {
     const cookieStore = await cookies();
     const supabase = createServerClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      supabaseUrl,
+      supabaseAnonKey,
       {
         cookies: {
           getAll() {
@@ -53,8 +56,8 @@ export async function getAuthUser(req: Request): Promise<{ userId: string; email
     const token = authHeader.split(" ")[1];
     try {
       const supabase = createClient(
-        process.env.SUPABASE_URL!,
-        process.env.SUPABASE_ANON_KEY!
+        supabaseUrl,
+        supabaseAnonKey
       );
       const { data: { user }, error } = await supabase.auth.getUser(token);
       if (user && !error) {
@@ -71,8 +74,8 @@ export async function getAuthUser(req: Request): Promise<{ userId: string; email
     const queryToken = url.searchParams.get("token");
     if (queryToken) {
       const supabase = createClient(
-        process.env.SUPABASE_URL!,
-        process.env.SUPABASE_ANON_KEY!
+        supabaseUrl,
+        supabaseAnonKey
       );
       const { data: { user }, error } = await supabase.auth.getUser(queryToken);
       if (user && !error) {
