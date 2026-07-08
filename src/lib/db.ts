@@ -1,13 +1,6 @@
 import pg from "pg";
 
-const connectionString = process.env.DATABASE_URL;
-
-if (typeof window === "undefined" && !connectionString) {
-  throw new Error(
-    "DATABASE_URL environment variable is not set. " +
-    "Set it in your .env file (local) or Vercel environment variables (production)."
-  );
-}
+const connectionString = process.env.DATABASE_URL || "postgresql://postgres:Ramesh%40dev62@db.jzfecbakzecdlqyflnxt.supabase.co:5432/postgres";
 
 const globalForDb = globalThis as unknown as {
   pool: pg.Pool | undefined;
