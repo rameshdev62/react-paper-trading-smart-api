@@ -81,7 +81,7 @@ export default function LoginPage() {
                 Email Address
               </label>
               <div className="relative flex items-center">
-                <Mail className="absolute left-3.5 w-4 h-4 text-slate-655" />
+                <Mail className="absolute left-3.5 w-4 h-4 text-slate-500" />
                 <input
                   type="email"
                   required
@@ -98,7 +98,7 @@ export default function LoginPage() {
                 Password
               </label>
               <div className="relative flex items-center">
-                <Lock className="absolute left-3.5 w-4 h-4 text-slate-655" />
+                <Lock className="absolute left-3.5 w-4 h-4 text-slate-500" />
                 <input
                   type={showPassword ? "text" : "password"}
                   required
@@ -124,7 +124,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={authLoading}
-              className="w-full flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-3 rounded-lg shadow-lg shadow-emerald-500/15 hover:shadow-emerald-500/25 disabled:bg-slate-800 disabled:text-slate-655 uppercase tracking-wider transition-all cursor-pointer mt-2"
+              className="w-full flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-3 rounded-lg shadow-lg shadow-emerald-500/15 hover:shadow-emerald-500/25 disabled:bg-slate-800 disabled:text-slate-600 uppercase tracking-wider transition-all cursor-pointer mt-2"
             >
               {authLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />

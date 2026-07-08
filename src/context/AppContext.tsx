@@ -2,6 +2,12 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 interface User {
   id: string;
@@ -131,6 +137,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const login = async (email: string, password: string) => {
+    console.log("[AppContext] Signin starting with email:", email);
+
+    // Auth using Supabase Client SDK package on frontend
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError || !authData.user) {
+      console.error("[AppContext] Supabase Auth SDK Signin failed:", authError?.message);
+      throw new Error(authError?.message || "Invalid credentials");
+    }
+
+    console.log("[AppContext] Supabase Auth SDK Signin successful! User ID:", authData.user.id);
+    console.log("[AppContext] Syncing session and fetching profile from server...");
+
+    // Call route handler to write server session cookies and retrieve profile balance
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -138,7 +161,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Login failed");
+    if (!res.ok) {
+      console.error("[AppContext] Sync profile failed:", data.error);
+      throw new Error(data.error || "Login failed");
+    }
+
+    console.log("[AppContext] Session synced and profile retrieved successfully for:", data.user.name);
 
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
@@ -192,7 +220,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           totalUnrealizedPl: data.totalUnrealizedPl,
           overallPlPercentage: data.overallPlPercentage,
         });
-        
+
         // Update user balance in context
         if (user && user.balance !== data.cashBalance) {
           const updatedUser = { ...user, balance: data.cashBalance };
@@ -377,7 +405,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     console.log("[AppContext] Connecting to market data SSE stream...");
-    
+
     // Close existing connection if any
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
