@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const supabase = await getRequestClient();
     const userId = user.userId;
 
     // Delete paper trading records in sequence

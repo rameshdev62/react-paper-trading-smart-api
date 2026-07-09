@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { priceStore } from "@/lib/priceStore";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +10,8 @@ export async function GET(req: NextRequest) {
   if (!user) {
     return new Response("Unauthorized", { status: 401 });
   }
+
+  const supabase = await getRequestClient();
 
   // Query watchlist & holdings to lazy-initialize their prices in the central price cache
   try {

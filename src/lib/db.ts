@@ -1,11 +1,48 @@
 import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
 const supabaseUrl = process.env.SUPABASE_URL || "https://jzfecbakzecdlqyflnxt.supabase.co";
-// Use the service role key if available to bypass RLS for server-side operations and matching engine
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp6ZmVjYmFremVjZGxxeWZsbnh0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1MjIxMzAsImV4cCI6MjA5OTA5ODEzMH0.lF6h0yEh_EFOtjSCC2I-B9W-EkpW7gJUN7ae3OrSvMk";
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-export const supabase = createClient(supabaseUrl, supabaseKey, {
+// Standard anonymous fallback client
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: false,
   },
 });
+
+// Dynamic request-specific, cookie-aware client to validate user RLS
+export async function getRequestClient() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    supabaseUrl,
+    supabaseAnonKey,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          } catch {}
+        },
+      },
+    }
+  );
+}
+
+// Service role client to bypass RLS in matching engines / background tasks
+export function getServiceClient() {
+  // Fall back to anon key if service role key is not configured
+  const key = supabaseServiceKey || supabaseAnonKey;
+  return createClient(supabaseUrl, key, {
+    auth: {
+      persistSession: false,
+    },
+  });
+}

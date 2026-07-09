@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +12,8 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const supabase = await getRequestClient();
 
     const searchParams = req.nextUrl.searchParams;
     const group = searchParams.get("group");
@@ -61,6 +63,8 @@ export async function POST(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const supabase = await getRequestClient();
 
     const { symbol, token, exchange, group, mode } = await req.json();
     if (!symbol || !token || !exchange) {
@@ -115,6 +119,8 @@ export async function DELETE(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const supabase = await getRequestClient();
 
     const searchParams = req.nextUrl.searchParams;
     const token = searchParams.get("token");

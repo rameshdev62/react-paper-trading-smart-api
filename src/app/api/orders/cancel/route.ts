@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Order ID is required" }, { status: 400 });
     }
 
+    const supabase = await getRequestClient();
     // Cancel order
     const { data: orders, error: selectError } = await supabase
       .from("Order")

@@ -1,6 +1,8 @@
 import { generateSync } from "otplib";
-import { supabase } from "./db";
+import { getServiceClient } from "./db";
 import { priceStore } from "./priceStore";
+
+const supabase = getServiceClient();
 
 interface LoginResponse {
   status: boolean;

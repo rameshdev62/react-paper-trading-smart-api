@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 import { validateCredentials } from "@/lib/smartapi";
 
 export const dynamic = "force-dynamic";
 
 // Fallback logic for mock mode or failures
-async function getMockMovers() {
+async function getMockMovers(supabase: any) {
   const prices = priceStore.getAllPrices();
   const tokens = Object.keys(prices);
 
@@ -23,7 +23,7 @@ async function getMockMovers() {
 
   if (error) throw error;
 
-  const list = instruments.map((inst) => {
+  const list = (instruments as any[]).map((inst: any) => {
     const priceInfo = prices[inst.token];
     return {
       token: inst.token,
@@ -54,6 +54,8 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const supabase = await getRequestClient();
 
     const searchParams = req.nextUrl.searchParams;
     const mode = searchParams.get("mode") || "mock";
@@ -123,7 +125,7 @@ export async function GET(req: NextRequest) {
               const gainers = (gainersData.data || []).map(mapItem).slice(0, 5);
               const losers = (losersData.data || []).map(mapItem).slice(0, 5);
 
-              const mockData = await getMockMovers();
+              const mockData = await getMockMovers(supabase);
               return NextResponse.json({ gainers, losers, nifty50: mockData.nifty50 });
             }
           }
@@ -135,7 +137,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Fallback to mock movers if mock mode, no credentials, or live fetch fails
-    const mockMovers = await getMockMovers();
+    const mockMovers = await getMockMovers(supabase);
     return NextResponse.json(mockMovers);
   } catch (error: any) {
     console.error("[Market Gainers/Losers API] Error:", error);

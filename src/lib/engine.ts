@@ -1,5 +1,7 @@
-import { supabase } from "./db";
+import { getServiceClient } from "./db";
 import { priceStore } from "./priceStore";
+
+const supabase = getServiceClient();
 
 export async function placeOrder(params: {
   userId: string;

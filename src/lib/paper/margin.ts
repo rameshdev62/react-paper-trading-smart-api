@@ -1,4 +1,6 @@
-import { supabase } from "../db";
+import { getServiceClient } from "../db";
+
+const supabase = getServiceClient();
 
 export async function getMarginRequired(
   userId: string,

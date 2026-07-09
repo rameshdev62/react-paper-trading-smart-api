@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,8 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const supabase = await getRequestClient();
 
     // Fetch positions where net quantity is positive (representing long holdings)
     const { data: positions, error: posError } = await supabase

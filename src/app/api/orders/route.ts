@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 import { placeOrder } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const supabase = await getRequestClient();
     const { data: orders, error } = await supabase
       .from("Order")
       .select("*")

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const supabase = await getRequestClient();
     // Fetch user details, holdings, and history in parallel
     const [userRes, holdingsRes, historyRes] = await Promise.all([
       supabase.from("User").select("balance").eq("id", user.userId).limit(1),

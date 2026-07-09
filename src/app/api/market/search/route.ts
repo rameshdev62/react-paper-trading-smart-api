@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/db";
+import { getRequestClient } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
+    const supabase = await getRequestClient();
     const searchParams = req.nextUrl.searchParams;
     const queryStr = searchParams.get("query") || "";
 

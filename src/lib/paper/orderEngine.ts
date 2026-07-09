@@ -1,7 +1,9 @@
-import { supabase } from "../db";
+import { getServiceClient } from "../db";
 import { validateBalance, createAccount } from "./margin";
 import { calculateCharges } from "./brokerage";
 import { priceStore } from "../priceStore";
+
+const supabase = getServiceClient();
 
 interface PlaceOrderInput {
   userId: string;
