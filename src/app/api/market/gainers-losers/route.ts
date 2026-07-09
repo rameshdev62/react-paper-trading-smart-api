@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 import { validateCredentials } from "@/lib/smartapi";
 
@@ -15,11 +15,13 @@ async function getMockMovers() {
     return { gainers: [], losers: [], nifty50: [] };
   }
 
-  const instrumentsRes = await query(
-    'SELECT token, symbol, name, "exchSeg" FROM "Instrument" WHERE token = ANY($1) AND symbol LIKE \'%-EQ\'',
-    [tokens]
-  );
-  const instruments = instrumentsRes.rows;
+  const { data: instruments, error } = await supabase
+    .from("Instrument")
+    .select("token, symbol, name, exchSeg")
+    .in("token", tokens)
+    .like("symbol", "%-EQ");
+
+  if (error) throw error;
 
   const list = instruments.map((inst) => {
     const priceInfo = prices[inst.token];

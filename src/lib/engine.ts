@@ -1,4 +1,4 @@
-import { pool, query } from "./db";
+import { supabase } from "./db";
 import { priceStore } from "./priceStore";
 
 export async function placeOrder(params: {
@@ -23,160 +23,242 @@ export async function placeOrder(params: {
     price = ltp;
   }
 
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  // Get user to check balance
+  const { data: userData, error: userError } = await supabase
+    .from("User")
+    .select("balance")
+    .eq("id", userId)
+    .limit(1);
+  if (userError) throw userError;
+  const user = userData?.[0];
+  if (!user) throw new Error("User not found");
 
-    // Get user to check balance
-    const userRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [userId]);
-    const user = userRes.rows[0];
-    if (!user) throw new Error("User not found");
+  const orderId = require("crypto").randomUUID();
 
-    const orderId = require("crypto").randomUUID();
-
-    if (transactionType === "BUY") {
-      const requiredMargin = quantity * price;
-      if (user.balance < requiredMargin) {
-        throw new Error(`Insufficient funds. Required: ₹${requiredMargin.toFixed(2)}, Available: ₹${user.balance.toFixed(2)}`);
-      }
-
-      // Create the order record
-      const isMarket = orderType === "MARKET";
-      const status = isMarket ? "COMPLETED" : "PENDING";
-      const completedAt = isMarket ? new Date() : null;
-
-      const orderInsertRes = await client.query(
-        `INSERT INTO "Order" (id, "userId", symbol, token, exchange, quantity, price, "orderType", "transactionType", "productType", status, "completedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-        [orderId, userId, symbol, token, exchange, quantity, price, orderType, transactionType, productType, status, completedAt]
-      );
-      const order = orderInsertRes.rows[0];
-
-      // If market order, execute trade immediately (adjust balance and holdings)
-      if (isMarket) {
-        // Deduct balance
-        await client.query('UPDATE "User" SET balance = balance - $1 WHERE id = $2', [requiredMargin, userId]);
-
-        // Add/update holdings
-        const existingHoldingRes = await client.query(
-          'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
-          [userId, token, exchange]
-        );
-        const existingHolding = existingHoldingRes.rows[0];
-
-        if (existingHolding) {
-          const newQty = existingHolding.quantity + quantity;
-          const newAvgPrice = (existingHolding.averagePrice * existingHolding.quantity + price * quantity) / newQty;
-          await client.query(
-            'UPDATE "Holding" SET quantity = $1, "averagePrice" = $2 WHERE id = $3',
-            [newQty, parseFloat(newAvgPrice.toFixed(2)), existingHolding.id]
-          );
-        } else {
-          const holdingId = require("crypto").randomUUID();
-          await client.query(
-            'INSERT INTO "Holding" (id, "userId", symbol, token, exchange, quantity, "averagePrice") VALUES ($1, $2, $3, $4, $5, $6, $7)',
-            [holdingId, userId, symbol, token, exchange, quantity, price]
-          );
-        }
-
-        // Log portfolio history
-        const updatedUserRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [userId]);
-        const updatedUser = updatedUserRes.rows[0];
-
-        const holdingsRes = await client.query('SELECT * FROM "Holding" WHERE "userId" = $1', [userId]);
-        const holdings = holdingsRes.rows;
-
-        let holdingsVal = 0;
-        for (const h of holdings) {
-          const hLtp = priceStore.getPrice(h.token).ltp;
-          holdingsVal += h.quantity * hLtp;
-        }
-
-        const historyId = require("crypto").randomUUID();
-        await client.query(
-          'INSERT INTO "PortfolioHistory" (id, "userId", "cashBalance", "totalValue") VALUES ($1, $2, $3, $4)',
-          [historyId, userId, updatedUser.balance, updatedUser.balance + holdingsVal]
-        );
-      }
-
-      await client.query("COMMIT");
-      return order;
-    } else {
-      // transactionType === "SELL"
-      // Verify holdings
-      const holdingRes = await client.query(
-        'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
-        [userId, token, exchange]
-      );
-      const holding = holdingRes.rows[0];
-
-      if (!holding || holding.quantity < quantity) {
-        throw new Error(`Insufficient shares in holdings to sell. Have: ${holding ? holding.quantity : 0}, Selling: ${quantity}`);
-      }
-
-      // Create order record
-      const isMarket = orderType === "MARKET";
-      const status = isMarket ? "COMPLETED" : "PENDING";
-      const completedAt = isMarket ? new Date() : null;
-
-      const orderInsertRes = await client.query(
-        `INSERT INTO "Order" (id, "userId", symbol, token, exchange, quantity, price, "orderType", "transactionType", "productType", status, "completedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-        [orderId, userId, symbol, token, exchange, quantity, price, orderType, transactionType, productType, status, completedAt]
-      );
-      const order = orderInsertRes.rows[0];
-
-      // If market order, execute trade immediately
-      if (isMarket) {
-        const proceeds = quantity * price;
-
-        // Add balance
-        await client.query('UPDATE "User" SET balance = balance + $1 WHERE id = $2', [proceeds, userId]);
-
-        // Decrement/delete holding
-        if (holding.quantity === quantity) {
-          await client.query('DELETE FROM "Holding" WHERE id = $1', [holding.id]);
-        } else {
-          await client.query('UPDATE "Holding" SET quantity = quantity - $1 WHERE id = $2', [quantity, holding.id]);
-        }
-
-        // Log portfolio history
-        const updatedUserRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [userId]);
-        const updatedUser = updatedUserRes.rows[0];
-
-        const holdingsRes = await client.query('SELECT * FROM "Holding" WHERE "userId" = $1', [userId]);
-        const holdings = holdingsRes.rows;
-
-        let holdingsVal = 0;
-        for (const h of holdings) {
-          const hLtp = priceStore.getPrice(h.token).ltp;
-          holdingsVal += h.quantity * hLtp;
-        }
-
-        const historyId = require("crypto").randomUUID();
-        await client.query(
-          'INSERT INTO "PortfolioHistory" (id, "userId", "cashBalance", "totalValue") VALUES ($1, $2, $3, $4)',
-          [historyId, userId, updatedUser.balance, updatedUser.balance + holdingsVal]
-        );
-      }
-
-      await client.query("COMMIT");
-      return order;
+  if (transactionType === "BUY") {
+    const requiredMargin = quantity * price;
+    if (user.balance < requiredMargin) {
+      throw new Error(`Insufficient funds. Required: ₹${requiredMargin.toFixed(2)}, Available: ₹${user.balance.toFixed(2)}`);
     }
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
+
+    const isMarket = orderType === "MARKET";
+    const status = isMarket ? "COMPLETED" : "PENDING";
+    const completedAt = isMarket ? new Date().toISOString() : null;
+
+    const { data: orderData, error: orderError } = await supabase
+      .from("Order")
+      .insert({
+        id: orderId,
+        userId,
+        symbol,
+        token,
+        exchange,
+        quantity,
+        price,
+        orderType,
+        transactionType,
+        productType,
+        status,
+        completedAt,
+      })
+      .select();
+    if (orderError) throw orderError;
+    const order = orderData?.[0];
+
+    // If market order, execute trade immediately (adjust balance and holdings)
+    if (isMarket) {
+      // Deduct balance
+      const { error: updateBalError } = await supabase
+        .from("User")
+        .update({ balance: user.balance - requiredMargin })
+        .eq("id", userId);
+      if (updateBalError) throw updateBalError;
+
+      // Add/update holdings
+      const { data: existingHoldings, error: getHoldingError } = await supabase
+        .from("Holding")
+        .select("*")
+        .eq("userId", userId)
+        .eq("token", token)
+        .eq("exchange", exchange)
+        .limit(1);
+      if (getHoldingError) throw getHoldingError;
+      const existingHolding = existingHoldings?.[0];
+
+      if (existingHolding) {
+        const newQty = existingHolding.quantity + quantity;
+        const newAvgPrice = (existingHolding.averagePrice * existingHolding.quantity + price * quantity) / newQty;
+        const { error: updateHoldingError } = await supabase
+          .from("Holding")
+          .update({
+            quantity: newQty,
+            averagePrice: parseFloat(newAvgPrice.toFixed(2)),
+          })
+          .eq("id", existingHolding.id);
+        if (updateHoldingError) throw updateHoldingError;
+      } else {
+        const holdingId = require("crypto").randomUUID();
+        const { error: insertHoldingError } = await supabase
+          .from("Holding")
+          .insert({
+            id: holdingId,
+            userId,
+            symbol,
+            token,
+            exchange,
+            quantity,
+            averagePrice: price,
+          });
+        if (insertHoldingError) throw insertHoldingError;
+      }
+
+      // Log portfolio history
+      const { data: updatedUsers, error: getUpdatedUserError } = await supabase
+        .from("User")
+        .select("balance")
+        .eq("id", userId)
+        .limit(1);
+      if (getUpdatedUserError) throw getUpdatedUserError;
+      const updatedUser = updatedUsers?.[0];
+
+      const { data: holdings, error: getHoldingsError } = await supabase
+        .from("Holding")
+        .select("*")
+        .eq("userId", userId);
+      if (getHoldingsError) throw getHoldingsError;
+
+      let holdingsVal = 0;
+      for (const h of holdings || []) {
+        const hLtp = priceStore.getPrice(h.token).ltp;
+        holdingsVal += h.quantity * hLtp;
+      }
+
+      const historyId = require("crypto").randomUUID();
+      const { error: insertHistoryError } = await supabase
+        .from("PortfolioHistory")
+        .insert({
+          id: historyId,
+          userId,
+          cashBalance: updatedUser.balance,
+          totalValue: updatedUser.balance + holdingsVal,
+        });
+      if (insertHistoryError) throw insertHistoryError;
+    }
+
+    return order;
+  } else {
+    // transactionType === "SELL"
+    // Verify holdings
+    const { data: existingHoldings, error: getHoldingError } = await supabase
+      .from("Holding")
+      .select("*")
+      .eq("userId", userId)
+      .eq("token", token)
+      .eq("exchange", exchange)
+      .limit(1);
+    if (getHoldingError) throw getHoldingError;
+    const holding = existingHoldings?.[0];
+
+    if (!holding || holding.quantity < quantity) {
+      throw new Error(`Insufficient shares in holdings to sell. Have: ${holding ? holding.quantity : 0}, Selling: ${quantity}`);
+    }
+
+    const isMarket = orderType === "MARKET";
+    const status = isMarket ? "COMPLETED" : "PENDING";
+    const completedAt = isMarket ? new Date().toISOString() : null;
+
+    const { data: orderData, error: orderError } = await supabase
+      .from("Order")
+      .insert({
+        id: orderId,
+        userId,
+        symbol,
+        token,
+        exchange,
+        quantity,
+        price,
+        orderType,
+        transactionType,
+        productType,
+        status,
+        completedAt,
+      })
+      .select();
+    if (orderError) throw orderError;
+    const order = orderData?.[0];
+
+    // If market order, execute trade immediately
+    if (isMarket) {
+      const proceeds = quantity * price;
+
+      // Add balance
+      const { error: updateBalError } = await supabase
+        .from("User")
+        .update({ balance: user.balance + proceeds })
+        .eq("id", userId);
+      if (updateBalError) throw updateBalError;
+
+      // Decrement/delete holding
+      if (holding.quantity === quantity) {
+        const { error: deleteHoldingError } = await supabase
+          .from("Holding")
+          .delete()
+          .eq("id", holding.id);
+        if (deleteHoldingError) throw deleteHoldingError;
+      } else {
+        const { error: updateHoldingError } = await supabase
+          .from("Holding")
+          .update({ quantity: holding.quantity - quantity })
+          .eq("id", holding.id);
+        if (updateHoldingError) throw updateHoldingError;
+      }
+
+      // Log portfolio history
+      const { data: updatedUsers, error: getUpdatedUserError } = await supabase
+        .from("User")
+        .select("balance")
+        .eq("id", userId)
+        .limit(1);
+      if (getUpdatedUserError) throw getUpdatedUserError;
+      const updatedUser = updatedUsers?.[0];
+
+      const { data: holdings, error: getHoldingsError } = await supabase
+        .from("Holding")
+        .select("*")
+        .eq("userId", userId);
+      if (getHoldingsError) throw getHoldingsError;
+
+      let holdingsVal = 0;
+      for (const h of holdings || []) {
+        const hLtp = priceStore.getPrice(h.token).ltp;
+        holdingsVal += h.quantity * hLtp;
+      }
+
+      const historyId = require("crypto").randomUUID();
+      const { error: insertHistoryError } = await supabase
+        .from("PortfolioHistory")
+        .insert({
+          id: historyId,
+          userId,
+          cashBalance: updatedUser.balance,
+          totalValue: updatedUser.balance + holdingsVal,
+        });
+      if (insertHistoryError) throw insertHistoryError;
+    }
+
+    return order;
   }
 }
 
 export async function processPendingOrders() {
   try {
-    const pendingOrdersRes = await query('SELECT * FROM "Order" WHERE status = \'PENDING\'');
-    const pendingOrders = pendingOrdersRes.rows;
+    const { data: pendingOrders, error } = await supabase
+      .from("Order")
+      .select("*")
+      .eq("status", "PENDING");
+    if (error) throw error;
 
-    if (pendingOrders.length === 0) return;
+    if (!pendingOrders || pendingOrders.length === 0) return;
 
     for (const order of pendingOrders) {
       const currentPrice = priceStore.getPrice(order.token);
@@ -212,21 +294,26 @@ export async function processPendingOrders() {
 }
 
 async function executePendingOrder(orderId: string, fillPrice: number) {
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const orderRes = await client.query('SELECT * FROM "Order" WHERE id = $1', [orderId]);
-    const order = orderRes.rows[0];
+    const { data: orders, error: getOrderError } = await supabase
+      .from("Order")
+      .select("*")
+      .eq("id", orderId)
+      .limit(1);
+    if (getOrderError) throw getOrderError;
+    const order = orders?.[0];
     if (!order || order.status !== "PENDING") {
-      await client.query("ROLLBACK");
       return;
     }
 
-    const userRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [order.userId]);
-    const user = userRes.rows[0];
+    const { data: users, error: getUserError } = await supabase
+      .from("User")
+      .select("balance")
+      .eq("id", order.userId)
+      .limit(1);
+    if (getUserError) throw getUserError;
+    const user = users?.[0];
     if (!user) {
-      await client.query("ROLLBACK");
       return;
     }
 
@@ -234,105 +321,165 @@ async function executePendingOrder(orderId: string, fillPrice: number) {
       const requiredMargin = order.quantity * fillPrice;
       if (user.balance < requiredMargin) {
         // Cancel / reject order due to insufficient margin on trigger
-        await client.query(
-          'UPDATE "Order" SET status = \'REJECTED\', "rejectReason" = $1 WHERE id = $2',
-          ["Insufficient funds on order trigger", orderId]
-        );
-        await client.query("COMMIT");
+        const { error: rejectError } = await supabase
+          .from("Order")
+          .update({
+            status: "REJECTED",
+            rejectReason: "Insufficient funds on order trigger",
+          })
+          .eq("id", orderId);
+        if (rejectError) throw rejectError;
         return;
       }
 
       // Update user balance
-      await client.query('UPDATE "User" SET balance = balance - $1 WHERE id = $2', [requiredMargin, order.userId]);
+      const { error: updateBalError } = await supabase
+        .from("User")
+        .update({ balance: user.balance - requiredMargin })
+        .eq("id", order.userId);
+      if (updateBalError) throw updateBalError;
 
       // Update/Create holding
-      const existingHoldingRes = await client.query(
-        'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
-        [order.userId, order.token, order.exchange]
-      );
-      const existingHolding = existingHoldingRes.rows[0];
+      const { data: existingHoldings, error: getHoldingError } = await supabase
+        .from("Holding")
+        .select("*")
+        .eq("userId", order.userId)
+        .eq("token", order.token)
+        .eq("exchange", order.exchange)
+        .limit(1);
+      if (getHoldingError) throw getHoldingError;
+      const existingHolding = existingHoldings?.[0];
 
       if (existingHolding) {
         const newQty = existingHolding.quantity + order.quantity;
         const newAvgPrice = (existingHolding.averagePrice * existingHolding.quantity + fillPrice * order.quantity) / newQty;
-        await client.query(
-          'UPDATE "Holding" SET quantity = $1, "averagePrice" = $2 WHERE id = $3',
-          [newQty, parseFloat(newAvgPrice.toFixed(2)), existingHolding.id]
-        );
+        const { error: updateHoldingError } = await supabase
+          .from("Holding")
+          .update({
+            quantity: newQty,
+            averagePrice: parseFloat(newAvgPrice.toFixed(2)),
+          })
+          .eq("id", existingHolding.id);
+        if (updateHoldingError) throw updateHoldingError;
       } else {
         const holdingId = require("crypto").randomUUID();
-        await client.query(
-          'INSERT INTO "Holding" (id, "userId", symbol, token, exchange, quantity, "averagePrice") VALUES ($1, $2, $3, $4, $5, $6, $7)',
-          [holdingId, order.userId, order.symbol, order.token, order.exchange, order.quantity, fillPrice]
-        );
+        const { error: insertHoldingError } = await supabase
+          .from("Holding")
+          .insert({
+            id: holdingId,
+            userId: order.userId,
+            symbol: order.symbol,
+            token: order.token,
+            exchange: order.exchange,
+            quantity: order.quantity,
+            averagePrice: fillPrice,
+          });
+        if (insertHoldingError) throw insertHoldingError;
       }
 
       // Update order status
-      await client.query(
-        'UPDATE "Order" SET status = \'COMPLETED\', price = $1, "completedAt" = $2 WHERE id = $3',
-        [fillPrice, new Date(), orderId]
-      );
+      const { error: updateOrderError } = await supabase
+        .from("Order")
+        .update({
+          status: "COMPLETED",
+          price: fillPrice,
+          completedAt: new Date().toISOString(),
+        })
+        .eq("id", orderId);
+      if (updateOrderError) throw updateOrderError;
     } else {
       // transactionType === "SELL"
-      const holdingRes = await client.query(
-        'SELECT * FROM "Holding" WHERE "userId" = $1 AND token = $2 AND exchange = $3',
-        [order.userId, order.token, order.exchange]
-      );
-      const holding = holdingRes.rows[0];
+      const { data: existingHoldings, error: getHoldingError } = await supabase
+        .from("Holding")
+        .select("*")
+        .eq("userId", order.userId)
+        .eq("token", order.token)
+        .eq("exchange", order.exchange)
+        .limit(1);
+      if (getHoldingError) throw getHoldingError;
+      const holding = existingHoldings?.[0];
 
       if (!holding || holding.quantity < order.quantity) {
-        await client.query(
-          'UPDATE "Order" SET status = \'REJECTED\', "rejectReason" = $1 WHERE id = $2',
-          ["Insufficient shares held on order trigger", orderId]
-        );
-        await client.query("COMMIT");
+        const { error: rejectError } = await supabase
+          .from("Order")
+          .update({
+            status: "REJECTED",
+            rejectReason: "Insufficient shares held on order trigger",
+          })
+          .eq("id", orderId);
+        if (rejectError) throw rejectError;
         return;
       }
 
       const proceeds = order.quantity * fillPrice;
 
       // Update user balance
-      await client.query('UPDATE "User" SET balance = balance + $1 WHERE id = $2', [proceeds, order.userId]);
+      const { error: updateBalError } = await supabase
+        .from("User")
+        .update({ balance: user.balance + proceeds })
+        .eq("id", order.userId);
+      if (updateBalError) throw updateBalError;
 
       // Decrement or delete holding
       if (holding.quantity === order.quantity) {
-        await client.query('DELETE FROM "Holding" WHERE id = $1', [holding.id]);
+        const { error: deleteHoldingError } = await supabase
+          .from("Holding")
+          .delete()
+          .eq("id", holding.id);
+        if (deleteHoldingError) throw deleteHoldingError;
       } else {
-        await client.query('UPDATE "Holding" SET quantity = quantity - $1 WHERE id = $2', [order.quantity, holding.id]);
+        const { error: updateHoldingError } = await supabase
+          .from("Holding")
+          .update({ quantity: holding.quantity - order.quantity })
+          .eq("id", holding.id);
+        if (updateHoldingError) throw updateHoldingError;
       }
 
       // Update order status
-      await client.query(
-        'UPDATE "Order" SET status = \'COMPLETED\', price = $1, "completedAt" = $2 WHERE id = $3',
-        [fillPrice, new Date(), orderId]
-      );
+      const { error: updateOrderError } = await supabase
+        .from("Order")
+        .update({
+          status: "COMPLETED",
+          price: fillPrice,
+          completedAt: new Date().toISOString(),
+        })
+        .eq("id", orderId);
+      if (updateOrderError) throw updateOrderError;
     }
 
     // Update portfolio value log
-    const updatedUserRes = await client.query('SELECT balance FROM "User" WHERE id = $1', [order.userId]);
-    const updatedUser = updatedUserRes.rows[0];
+    const { data: updatedUsers, error: getUpdatedUserError } = await supabase
+      .from("User")
+      .select("balance")
+      .eq("id", order.userId)
+      .limit(1);
+    if (getUpdatedUserError) throw getUpdatedUserError;
+    const updatedUser = updatedUsers?.[0];
 
-    const holdingsRes = await client.query('SELECT * FROM "Holding" WHERE "userId" = $1', [order.userId]);
-    const holdings = holdingsRes.rows;
+    const { data: holdings, error: getHoldingsError } = await supabase
+      .from("Holding")
+      .select("*")
+      .eq("userId", order.userId);
+    if (getHoldingsError) throw getHoldingsError;
 
     let holdingsVal = 0;
-    for (const h of holdings) {
+    for (const h of holdings || []) {
       const hLtp = priceStore.getPrice(h.token).ltp;
       holdingsVal += h.quantity * hLtp;
     }
 
     const historyId = require("crypto").randomUUID();
-    await client.query(
-      'INSERT INTO "PortfolioHistory" (id, "userId", "cashBalance", "totalValue") VALUES ($1, $2, $3, $4)',
-      [historyId, order.userId, updatedUser.balance, updatedUser.balance + holdingsVal]
-    );
-
-    await client.query("COMMIT");
+    const { error: insertHistoryError } = await supabase
+      .from("PortfolioHistory")
+      .insert({
+        id: historyId,
+        userId: order.userId,
+        cashBalance: updatedUser.balance,
+        totalValue: updatedUser.balance + holdingsVal,
+      });
+    if (insertHistoryError) throw insertHistoryError;
   } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("[OrderEngine] Error executing pending order transaction:", err);
-  } finally {
-    client.release();
+    console.error("[OrderEngine] Error executing pending order:", err);
   }
 }
 
@@ -342,4 +489,3 @@ if (typeof window === "undefined") {
     processPendingOrders();
   });
 }
-

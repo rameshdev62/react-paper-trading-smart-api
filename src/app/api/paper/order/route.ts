@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { placeOrder } from "@/lib/paper/orderEngine";
 
 export const dynamic = "force-dynamic";
@@ -35,11 +35,14 @@ export async function POST(req: NextRequest) {
 
     const targetSymbol = symbol.trim().toUpperCase();
 
-    const instResult = await query(
-      'SELECT * FROM "Instrument" WHERE symbol = $1 OR symbol = $2 OR name = $3 LIMIT 1',
-      [targetSymbol, targetSymbol + "-EQ", targetSymbol]
-    );
-    let dbInstrument = instResult.rows[0];
+    const { data: instruments, error: instError } = await supabase
+      .from("Instrument")
+      .select("*")
+      .or(`symbol.eq."${targetSymbol}",symbol.eq."${targetSymbol}-EQ",name.eq."${targetSymbol}"`)
+      .limit(1);
+
+    if (instError) throw instError;
+    let dbInstrument = instruments?.[0] || null;
 
     if (!dbInstrument) {
       // Fallback

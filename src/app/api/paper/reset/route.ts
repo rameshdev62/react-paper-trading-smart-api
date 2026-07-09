@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { pool } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -13,21 +13,14 @@ export async function POST(req: NextRequest) {
 
     const userId = user.userId;
 
-    const dbClient = await pool.connect();
-    try {
-      await dbClient.query("BEGIN");
-      await dbClient.query('DELETE FROM "PaperTrade" WHERE "userId" = $1', [userId]);
-      await dbClient.query('DELETE FROM "PaperOrder" WHERE "userId" = $1', [userId]);
-      await dbClient.query('DELETE FROM "PaperPosition" WHERE "userId" = $1', [userId]);
-      await dbClient.query('DELETE FROM "PaperHolding" WHERE "userId" = $1', [userId]);
-      await dbClient.query('DELETE FROM "PaperTransaction" WHERE "userId" = $1', [userId]);
-      await dbClient.query('DELETE FROM "PaperAccount" WHERE "userId" = $1', [userId]);
-      await dbClient.query("COMMIT");
-    } catch (txError) {
-      await dbClient.query("ROLLBACK");
-      throw txError;
-    } finally {
-      dbClient.release();
+    // Delete paper trading records in sequence
+    const targets = ["PaperTrade", "PaperOrder", "PaperPosition", "PaperHolding", "PaperTransaction", "PaperAccount"];
+    for (const table of targets) {
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .eq("userId", userId);
+      if (error) throw error;
     }
 
     return NextResponse.json({ message: "Paper trading data reset successfully" });

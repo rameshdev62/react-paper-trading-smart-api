@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -13,16 +13,17 @@ export async function GET(req: NextRequest) {
 
     const status = req.nextUrl.searchParams.get("status");
 
-    let queryText = 'SELECT * FROM "PaperOrder" WHERE "userId" = $1';
-    const params = [user.userId];
-    if (status) {
-      queryText += ' AND status = $2';
-      params.push(status);
-    }
-    queryText += ' ORDER BY "createdAt" DESC';
+    let queryBuilder = supabase
+      .from("PaperOrder")
+      .select("*")
+      .eq("userId", user.userId);
 
-    const result = await query(queryText, params);
-    const orders = result.rows;
+    if (status) {
+      queryBuilder = queryBuilder.eq("status", status);
+    }
+
+    const { data: orders, error } = await queryBuilder.order("createdAt", { ascending: false });
+    if (error) throw error;
 
     const mapped = orders.map((o) => ({
       id: o.id,

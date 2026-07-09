@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query as dbQuery } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +13,13 @@ export async function GET(req: NextRequest) {
     }
 
     // Query our cached Instrument Master table
-    const result = await dbQuery(
-      'SELECT * FROM "Instrument" WHERE symbol ILIKE $1 OR name ILIKE $2 LIMIT 10',
-      [`%${queryStr}%`, `%${queryStr}%`]
-    );
-    const instruments = result.rows;
+    const { data: instruments, error } = await supabase
+      .from("Instrument")
+      .select("*")
+      .or(`symbol.ilike.%${queryStr}%,name.ilike.%${queryStr}%`)
+      .limit(10);
+
+    if (error) throw error;
 
     return NextResponse.json(instruments);
   } catch (error: any) {

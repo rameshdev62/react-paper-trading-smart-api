@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { priceStore } from "@/lib/priceStore";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -14,11 +14,15 @@ export async function GET(req: NextRequest) {
   // Query watchlist & holdings to lazy-initialize their prices in the central price cache
   try {
     const [watchlistRes, holdingsRes] = await Promise.all([
-      query('SELECT token FROM "Watchlist" WHERE "userId" = $1', [user.userId]),
-      query('SELECT token FROM "Holding" WHERE "userId" = $1', [user.userId]),
+      supabase.from("Watchlist").select("token").eq("userId", user.userId),
+      supabase.from("Holding").select("token").eq("userId", user.userId),
     ]);
-    const watchlist = watchlistRes.rows;
-    const holdings = holdingsRes.rows;
+
+    if (watchlistRes.error) throw watchlistRes.error;
+    if (holdingsRes.error) throw holdingsRes.error;
+
+    const watchlist = watchlistRes.data || [];
+    const holdings = holdingsRes.data || [];
 
     const allUserTokens = new Set([
       ...watchlist.map((w) => w.token),

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 
 export const dynamic = "force-dynamic";
@@ -13,22 +13,27 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch positions where net quantity is positive (representing long holdings)
-    const positionsRes = await query(
-      'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND "netQty" > 0',
-      [user.userId]
-    );
-    const positions = positionsRes.rows;
+    const { data: positions, error: posError } = await supabase
+      .from("PaperPosition")
+      .select("*")
+      .eq("userId", user.userId)
+      .gt("netQty", 0);
+
+    if (posError) throw posError;
 
     const holdings = await Promise.all(
-      positions.map(async (pos) => {
+      (positions || []).map(async (pos) => {
         let ltp = pos.ltp || 0;
         
         // Resolve token to fetch real-time price
-        const instRes = await query(
-          'SELECT token FROM "Instrument" WHERE symbol = $1 LIMIT 1',
-          [pos.symbol]
-        );
-        const inst = instRes.rows[0];
+        const { data: instruments, error: instError } = await supabase
+          .from("Instrument")
+          .select("token")
+          .eq("symbol", pos.symbol)
+          .limit(1);
+
+        if (instError) throw instError;
+        const inst = instruments?.[0];
 
         if (inst) {
           const priceInfo = priceStore.getPrice(inst.token);

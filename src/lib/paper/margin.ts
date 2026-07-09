@@ -1,4 +1,4 @@
-import { query } from "../db";
+import { supabase } from "../db";
 
 export async function getMarginRequired(
   userId: string,
@@ -12,8 +12,13 @@ export async function validateBalance(
   userId: string,
   requiredMargin: number,
 ): Promise<{ valid: boolean; available: number; message?: string }> {
-  const accountRes = await query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [userId]);
-  let account = accountRes.rows[0];
+  const { data: accounts, error } = await supabase
+    .from("PaperAccount")
+    .select("*")
+    .eq("userId", userId)
+    .limit(1);
+  if (error) throw error;
+  let account = accounts?.[0];
   if (!account) {
     account = await createAccount(userId);
   }
@@ -31,9 +36,16 @@ export async function validateBalance(
 
 export async function createAccount(userId: string) {
   const uuid = require("crypto").randomUUID();
-  const result = await query(
-    'INSERT INTO "PaperAccount" (id, "userId", balance, "availableBalance", "updatedAt") VALUES ($1, $2, $3, $4, NOW()) RETURNING *',
-    [uuid, userId, 1000000.0, 1000000.0]
-  );
-  return result.rows[0];
+  const { data: accounts, error } = await supabase
+    .from("PaperAccount")
+    .insert({
+      id: uuid,
+      userId,
+      balance: 1000000.0,
+      availableBalance: 1000000.0,
+      updatedAt: new Date().toISOString(),
+    })
+    .select();
+  if (error) throw error;
+  return accounts?.[0];
 }

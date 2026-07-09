@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -21,10 +21,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Cannot rename the Default group" }, { status: 400 });
     }
 
-    await query(
-      'UPDATE "Watchlist" SET "group" = $1 WHERE "userId" = $2 AND "group" = $3',
-      [newName, user.userId, oldName]
-    );
+    const { error } = await supabase
+      .from("Watchlist")
+      .update({ group: newName })
+      .eq("userId", user.userId)
+      .eq("group", oldName);
+
+    if (error) throw error;
 
     return NextResponse.json({ message: "Group renamed successfully" });
   } catch (error: any) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +24,13 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Cannot delete the Default group" }, { status: 400 });
     }
 
-    await query(
-      'DELETE FROM "Watchlist" WHERE "userId" = $1 AND "group" = $2',
-      [user.userId, group]
-    );
+    const { error } = await supabase
+      .from("Watchlist")
+      .delete()
+      .eq("userId", user.userId)
+      .eq("group", group);
+
+    if (error) throw error;
 
     if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
       const { startLiveFeed } = require("@/lib/smartapi");

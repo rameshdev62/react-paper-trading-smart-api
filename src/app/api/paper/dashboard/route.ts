@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { createAccount } from "@/lib/paper/margin";
 
 export const dynamic = "force-dynamic";
@@ -12,32 +12,41 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const accountRes = await query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [user.userId]);
-    let account = accountRes.rows[0];
+    const { data: accounts, error: accountError } = await supabase
+      .from("PaperAccount")
+      .select("*")
+      .eq("userId", user.userId);
+
+    if (accountError) throw accountError;
+    let account = accounts?.[0] || null;
     if (!account) {
       account = await createAccount(user.userId);
     }
 
-    const positionsRes = await query(
-      'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND "netQty" <> 0',
-      [user.userId]
-    );
-    const positions = positionsRes.rows;
-
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const tradesRes = await query(
-      'SELECT * FROM "PaperTrade" WHERE "userId" = $1 AND "tradeTime" >= $2 ORDER BY "tradeTime" DESC',
-      [user.userId, todayStart]
-    );
-    const todaysTrades = tradesRes.rows;
+    const [positionsRes, tradesRes, ordersRes] = await Promise.all([
+      supabase.from("PaperPosition").select("*").eq("userId", user.userId).neq("netQty", 0),
+      supabase.from("PaperTrade")
+        .select("*")
+        .eq("userId", user.userId)
+        .gte("tradeTime", todayStart.toISOString())
+        .order("tradeTime", { ascending: false }),
+      supabase.from("PaperOrder")
+        .select("*")
+        .eq("userId", user.userId)
+        .in("status", ["PENDING", "OPEN"])
+        .order("createdAt", { ascending: false }),
+    ]);
 
-    const ordersRes = await query(
-      'SELECT * FROM "PaperOrder" WHERE "userId" = $1 AND status IN (\'PENDING\', \'OPEN\') ORDER BY "createdAt" DESC',
-      [user.userId]
-    );
-    const openOrders = ordersRes.rows;
+    if (positionsRes.error) throw positionsRes.error;
+    if (tradesRes.error) throw tradesRes.error;
+    if (ordersRes.error) throw ordersRes.error;
+
+    const positions = positionsRes.data || [];
+    const todaysTrades = tradesRes.data || [];
+    const openOrders = ordersRes.data || [];
 
     return NextResponse.json({
       account,

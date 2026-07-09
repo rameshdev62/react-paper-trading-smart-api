@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 
 export const dynamic = "force-dynamic";
@@ -12,24 +12,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Fetch user details
-    const userRes = await query('SELECT balance FROM "User" WHERE id = $1', [user.userId]);
-    const dbUser = userRes.rows[0];
+    // Fetch user details, holdings, and history in parallel
+    const [userRes, holdingsRes, historyRes] = await Promise.all([
+      supabase.from("User").select("balance").eq("id", user.userId).limit(1),
+      supabase.from("Holding").select("*").eq("userId", user.userId),
+      supabase.from("PortfolioHistory")
+        .select("*")
+        .eq("userId", user.userId)
+        .order("timestamp", { ascending: true })
+        .limit(50),
+    ]);
 
-    if (!dbUser) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    if (userRes.error) throw userRes.error;
+    if (holdingsRes.error) throw holdingsRes.error;
+    if (historyRes.error) throw historyRes.error;
 
-    // Fetch holdings
-    const holdingsRes = await query('SELECT * FROM "Holding" WHERE "userId" = $1', [user.userId]);
-    const holdings = holdingsRes.rows;
-
-    // Fetch portfolio history log (last 50 logs for charts)
-    const historyRes = await query(
-      'SELECT * FROM "PortfolioHistory" WHERE "userId" = $1 ORDER BY timestamp ASC LIMIT 50',
-      [user.userId]
-    );
-    const history = historyRes.rows;
+    const dbUser = userRes.data?.[0];
+    const holdings = holdingsRes.data || [];
+    const history = historyRes.data || [];
 
     let totalHoldingsCost = 0;
     let totalHoldingsValue = 0;

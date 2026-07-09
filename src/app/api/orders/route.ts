@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { placeOrder } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +13,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const result = await query(
-      'SELECT * FROM "Order" WHERE "userId" = $1 ORDER BY "createdAt" DESC',
-      [user.userId]
-    );
-    const orders = result.rows;
+    const { data: orders, error } = await supabase
+      .from("Order")
+      .select("*")
+      .eq("userId", user.userId)
+      .order("createdAt", { ascending: false });
+
+    if (error) {
+      throw error;
+    }
 
     return NextResponse.json(orders);
   } catch (error: any) {

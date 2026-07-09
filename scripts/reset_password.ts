@@ -19,19 +19,11 @@ function loadEnv() {
   }
 }
 loadEnv();
-import pg from "pg";
 import { createClient } from "@supabase/supabase-js";
 
-const connectionString = process.env.DATABASE_URL!;
-const pool = new pg.Pool({
-  connectionString,
-  ssl: connectionString?.includes("supabase") ? { rejectUnauthorized: false } : undefined,
-});
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
-);
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function main() {
   const email = "ramesh.dev062@gmail.com";
@@ -74,16 +66,27 @@ async function main() {
 
   // Sync to public."User" table
   console.log("Syncing user to public.\"User\" table...");
-  await pool.query(
-    `INSERT INTO "User" (id, email, "passwordHash", name, balance, "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, NOW())
-     ON CONFLICT (email)
-     DO UPDATE SET id = EXCLUDED.id, name = EXCLUDED.name, "updatedAt" = NOW()`,
-    [userId, email, "", "Ramesh Dev", 1000000.0]
-  );
+  const { error: syncError } = await supabase
+    .from("User")
+    .upsert(
+      {
+        id: userId,
+        email,
+        passwordHash: "",
+        name: "Ramesh Dev",
+        balance: 1000000.0,
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        onConflict: "email",
+      }
+    );
+
+  if (syncError) {
+    throw new Error(`Failed to sync user: ${syncError.message}`);
+  }
   console.log("User synced successfully in public database!");
 }
 
 main()
-  .catch(console.error)
-  .finally(() => pool.end());
+  .catch(console.error);

@@ -1,4 +1,4 @@
-import { pool, query } from "../db";
+import { supabase } from "../db";
 import { validateBalance, createAccount } from "./margin";
 import { calculateCharges } from "./brokerage";
 import { priceStore } from "../priceStore";
@@ -22,8 +22,13 @@ export async function placeOrder(input: PlaceOrderInput) {
   } = input;
 
   // 1. Ensure account exists
-  const accountRes = await query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [userId]);
-  let account = accountRes.rows[0];
+  const { data: accounts, error: accountError } = await supabase
+    .from("PaperAccount")
+    .select("*")
+    .eq("userId", userId)
+    .limit(1);
+  if (accountError) throw accountError;
+  let account = accounts?.[0];
   if (!account) {
     account = await createAccount(userId);
   }
@@ -35,12 +40,24 @@ export async function placeOrder(input: PlaceOrderInput) {
 
   // 3. Create a PENDING order
   const orderId = require("crypto").randomUUID();
-  const orderRes = await query(
-    `INSERT INTO "PaperOrder" (id, "userId", symbol, exchange, instrument, side, "orderType", quantity, price, "triggerPrice", status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING') RETURNING *`,
-    [orderId, userId, symbol, exchange, instrument, side, orderType, quantity, price, triggerPrice || null]
-  );
-  const order = orderRes.rows[0];
+  const { data: orders, error: orderError } = await supabase
+    .from("PaperOrder")
+    .insert({
+      id: orderId,
+      userId,
+      symbol,
+      exchange,
+      instrument,
+      side,
+      orderType,
+      quantity,
+      price,
+      triggerPrice: triggerPrice || null,
+      status: "PENDING",
+    })
+    .select();
+  if (orderError) throw orderError;
+  const order = orders?.[0];
 
   // 4. For MARKET orders, get live price and execute immediately
   if (orderType === "MARKET") {
@@ -48,14 +65,23 @@ export async function placeOrder(input: PlaceOrderInput) {
   }
 
   // For LIMIT / SL / SL-M — mark as OPEN, will be matched by engine loop
-  await query('UPDATE "PaperOrder" SET status = \'OPEN\' WHERE id = $1', [order.id]);
+  const { error: updateOpenError } = await supabase
+    .from("PaperOrder")
+    .update({ status: "OPEN" })
+    .eq("id", order.id);
+  if (updateOpenError) throw updateOpenError;
 
   return { success: true, orderId: order.id, status: "OPEN" };
 }
 
 export async function executeOrder(orderId: string, fillPrice?: number) {
-  const orderRes = await query('SELECT * FROM "PaperOrder" WHERE id = $1', [orderId]);
-  const order = orderRes.rows[0];
+  const { data: orders, error: orderError } = await supabase
+    .from("PaperOrder")
+    .select("*")
+    .eq("id", orderId)
+    .limit(1);
+  if (orderError) throw orderError;
+  const order = orders?.[0];
   if (!order) throw new Error("Order not found");
 
   const livePrice = fillPrice || await getLivePriceBySymbol(order.symbol);
@@ -76,11 +102,15 @@ export async function executeOrder(orderId: string, fillPrice?: number) {
 
   // For SELL orders, validate position exists
   if (order.side === "SELL") {
-    const positionRes = await query(
-      'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND symbol = $2 AND exchange = $3',
-      [order.userId, order.symbol, order.exchange]
-    );
-    const position = positionRes.rows[0];
+    const { data: positions, error: posError } = await supabase
+      .from("PaperPosition")
+      .select("*")
+      .eq("userId", order.userId)
+      .eq("symbol", order.symbol)
+      .eq("exchange", order.exchange)
+      .limit(1);
+    if (posError) throw posError;
+    const position = positions?.[0];
     const availableQty = position ? position.netQty : 0;
     if (availableQty < order.quantity) {
       return rejectOrder(orderId, `Insufficient position. Available: ${availableQty}, Required: ${order.quantity}`);
@@ -92,81 +122,112 @@ export async function executeOrder(orderId: string, fillPrice?: number) {
   const charges = calculateCharges(tradeValue);
 
   // Execute — create trade, update position, update balance
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
     // Create trade record
     const tradeId = require("crypto").randomUUID();
-    await client.query(
-      'INSERT INTO "PaperTrade" (id, "orderId", "userId", symbol, side, price, qty) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [tradeId, order.id, order.userId, order.symbol, order.side, executionPrice, order.quantity]
-    );
+    const { error: insertTradeError } = await supabase
+      .from("PaperTrade")
+      .insert({
+        id: tradeId,
+        orderId: order.id,
+        userId: order.userId,
+        symbol: order.symbol,
+        side: order.side,
+        price: executionPrice,
+        qty: order.quantity,
+      });
+    if (insertTradeError) throw insertTradeError;
 
     // Update position
-    await updatePosition(client, order.userId, order.symbol, order.exchange, order.side, order.quantity, executionPrice);
+    await updatePosition(order.userId, order.symbol, order.exchange, order.side, order.quantity, executionPrice);
 
     // Update account balance
-    const accountRes = await client.query('SELECT * FROM "PaperAccount" WHERE "userId" = $1', [order.userId]);
-    const account = accountRes.rows[0];
+    const { data: accounts, error: getAccountError } = await supabase
+      .from("PaperAccount")
+      .select("*")
+      .eq("userId", order.userId)
+      .limit(1);
+    if (getAccountError) throw getAccountError;
+    const account = accounts?.[0];
     if (!account) throw new Error("Account not found");
 
     const transactionId = require("crypto").randomUUID();
 
     if (order.side === "BUY") {
       const totalCost = tradeValue + charges.total;
-      await client.query(
-        `UPDATE "PaperAccount"
-         SET "usedMargin" = "usedMargin" + $1,
-             "availableBalance" = "availableBalance" - $1,
-             balance = balance - $1,
-             "realizedPnl" = "realizedPnl" - $2,
-             "totalPnl" = "totalPnl" - $2
-         WHERE "userId" = $3`,
-        [totalCost, charges.total, order.userId]
-      );
-      await client.query(
-        `INSERT INTO "PaperTransaction" (id, "userId", type, amount, description, "balanceAfter")
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [transactionId, order.userId, "ORDER_DEBIT", totalCost, `Buy ${order.quantity} ${order.symbol} @ ${executionPrice}`, account.balance - totalCost]
-      );
+      const { error: updateAccountError } = await supabase
+        .from("PaperAccount")
+        .update({
+          usedMargin: account.usedMargin + totalCost,
+          availableBalance: account.availableBalance - totalCost,
+          balance: account.balance - totalCost,
+          realizedPnl: account.realizedPnl - charges.total,
+          totalPnl: account.totalPnl - charges.total,
+        })
+        .eq("userId", order.userId);
+      if (updateAccountError) throw updateAccountError;
+
+      const { error: insertTxError } = await supabase
+        .from("PaperTransaction")
+        .insert({
+          id: transactionId,
+          userId: order.userId,
+          type: "ORDER_DEBIT",
+          amount: totalCost,
+          description: `Buy ${order.quantity} ${order.symbol} @ ${executionPrice}`,
+          balanceAfter: account.balance - totalCost,
+        });
+      if (insertTxError) throw insertTxError;
     } else {
       const totalCredit = tradeValue - charges.total;
-      await client.query(
-        `UPDATE "PaperAccount"
-         SET "usedMargin" = "usedMargin" - $1,
-             "availableBalance" = "availableBalance" + $2,
-             balance = balance + $2
-         WHERE "userId" = $3`,
-        [order.quantity * executionPrice, totalCredit, order.userId]
-      );
-      await client.query(
-        `INSERT INTO "PaperTransaction" (id, "userId", type, amount, description, "balanceAfter")
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [transactionId, order.userId, "ORDER_CREDIT", totalCredit, `Sell ${order.quantity} ${order.symbol} @ ${executionPrice}`, account.balance + totalCredit]
-      );
-    }
+      const { error: updateAccountError } = await supabase
+        .from("PaperAccount")
+        .update({
+          usedMargin: account.usedMargin - (order.quantity * executionPrice),
+          availableBalance: account.availableBalance + totalCredit,
+          balance: account.balance + totalCredit,
+        })
+        .eq("userId", order.userId);
+      if (updateAccountError) throw updateAccountError;
 
-    await client.query("COMMIT");
+      const { error: insertTxError } = await supabase
+        .from("PaperTransaction")
+        .insert({
+          id: transactionId,
+          userId: order.userId,
+          type: "ORDER_CREDIT",
+          amount: totalCredit,
+          description: `Sell ${order.quantity} ${order.symbol} @ ${executionPrice}`,
+          balanceAfter: account.balance + totalCredit,
+        });
+      if (insertTxError) throw insertTxError;
+    }
   } catch (txErr) {
-    await client.query("ROLLBACK");
     throw txErr;
-  } finally {
-    client.release();
   }
 
-  // Mark order as FILLED (or EXECUTED for paper simulator)
-  await query(
-    'UPDATE "PaperOrder" SET status = \'FILLED\', "filledQty" = $1, "averagePrice" = $2 WHERE id = $3',
-    [order.quantity, executionPrice, order.id]
-  );
+  // Mark order as FILLED
+  const { error: updateOrderError } = await supabase
+    .from("PaperOrder")
+    .update({
+      status: "FILLED",
+      filledQty: order.quantity,
+      averagePrice: executionPrice,
+    })
+    .eq("id", order.id);
+  if (updateOrderError) throw updateOrderError;
 
   return { success: true, orderId: order.id, status: "FILLED", price: executionPrice };
 }
 
 async function getLivePriceBySymbol(symbol: string): Promise<number> {
-  const instRes = await query('SELECT token FROM "Instrument" WHERE symbol = $1 LIMIT 1', [symbol]);
-  const inst = instRes.rows[0];
+  const { data: instruments, error } = await supabase
+    .from("Instrument")
+    .select("token")
+    .eq("symbol", symbol)
+    .limit(1);
+  if (error) return 0;
+  const inst = instruments?.[0];
   if (inst) {
     const priceInfo = priceStore.getPrice(inst.token);
     return priceInfo ? priceInfo.ltp : 0;
@@ -175,15 +236,14 @@ async function getLivePriceBySymbol(symbol: string): Promise<number> {
 }
 
 export async function rejectOrder(orderId: string, reason: string) {
-  // If the ID is a user UUID (from placeOrder fallback), skip updating DB
   if (orderId.length > 36) {
     return { success: false, orderId, status: "REJECTED", reason };
   }
   try {
-    await query(
-      'UPDATE "PaperOrder" SET status = \'REJECTED\', "rejectReason" = $1 WHERE id = $2',
-      [reason, orderId]
-    );
+    await supabase
+      .from("PaperOrder")
+      .update({ status: "REJECTED", rejectReason: reason })
+      .eq("id", orderId);
   } catch {
     // Ignore db write failure if order record doesn't exist
   }
@@ -191,7 +251,6 @@ export async function rejectOrder(orderId: string, reason: string) {
 }
 
 async function updatePosition(
-  tx: any,
   userId: string,
   symbol: string,
   exchange: string,
@@ -199,11 +258,16 @@ async function updatePosition(
   qty: number,
   price: number,
 ) {
-  const existingRes = await tx.query(
-    'SELECT * FROM "PaperPosition" WHERE "userId" = $1 AND symbol = $2 AND exchange = $3',
-    [userId, symbol, exchange]
-  );
-  const existing = existingRes.rows[0];
+  const { data: positions, error: posError } = await supabase
+    .from("PaperPosition")
+    .select("*")
+    .eq("userId", userId)
+    .eq("symbol", symbol)
+    .eq("exchange", exchange)
+    .limit(1);
+
+  if (posError) throw posError;
+  const existing = positions?.[0];
 
   if (existing) {
     const newBuyQty = existing.buyQty + (side === "BUY" ? qty : 0);
@@ -225,46 +289,58 @@ async function updatePosition(
       newRealizedPnl += sellPnl;
     }
 
-    await tx.query(
-      `UPDATE "PaperPosition"
-       SET "buyQty" = $1, "sellQty" = $2, "netQty" = $3,
-           "avgBuyPrice" = $4, "avgSellPrice" = $5,
-           invested = $6, "realizedPnl" = $7
-       WHERE id = $8`,
-      [newBuyQty, newSellQty, newNetQty, newAvgBuy, newAvgSell, newInvested, newRealizedPnl, existing.id]
-    );
+    const { error: updateError } = await supabase
+      .from("PaperPosition")
+      .update({
+        buyQty: newBuyQty,
+        sellQty: newSellQty,
+        netQty: newNetQty,
+        avgBuyPrice: newAvgBuy,
+        avgSellPrice: newAvgSell,
+        invested: newInvested,
+        realizedPnl: newRealizedPnl,
+      })
+      .eq("id", existing.id);
+    if (updateError) throw updateError;
   } else {
     const positionId = require("crypto").randomUUID();
-    await tx.query(
-      `INSERT INTO "PaperPosition" (id, "userId", symbol, exchange, "buyQty", "sellQty", "netQty", "avgBuyPrice", "avgSellPrice", invested, "marketValue")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [
-        positionId, userId, symbol, exchange,
-        side === "BUY" ? qty : 0,
-        side === "SELL" ? qty : 0,
-        side === "BUY" ? qty : -qty,
-        side === "BUY" ? price : 0,
-        side === "SELL" ? price : 0,
-        side === "BUY" ? price * qty : 0,
-        price * qty
-      ]
-    );
+    const { error: insertError } = await supabase
+      .from("PaperPosition")
+      .insert({
+        id: positionId,
+        userId,
+        symbol,
+        exchange,
+        buyQty: side === "BUY" ? qty : 0,
+        sellQty: side === "SELL" ? qty : 0,
+        netQty: side === "BUY" ? qty : -qty,
+        avgBuyPrice: side === "BUY" ? price : 0,
+        avgSellPrice: side === "SELL" ? price : 0,
+        invested: side === "BUY" ? price * qty : 0,
+        marketValue: price * qty,
+      });
+    if (insertError) throw insertError;
   }
 }
 
 export async function processPendingPaperOrders() {
   try {
-    const openOrdersRes = await query('SELECT * FROM "PaperOrder" WHERE status = \'OPEN\'');
-    const openOrders = openOrdersRes.rows;
+    const { data: openOrders, error } = await supabase
+      .from("PaperOrder")
+      .select("*")
+      .eq("status", "OPEN");
+    if (error) throw error;
 
-    if (openOrders.length === 0) return;
+    if (!openOrders || openOrders.length === 0) return;
 
     for (const order of openOrders) {
-      const instRes = await query(
-        'SELECT token FROM "Instrument" WHERE symbol = $1 LIMIT 1',
-        [order.symbol]
-      );
-      const inst = instRes.rows[0];
+      const { data: instruments, error: instError } = await supabase
+        .from("Instrument")
+        .select("token")
+        .eq("symbol", order.symbol)
+        .limit(1);
+      if (instError) continue;
+      const inst = instruments?.[0];
       if (!inst) continue;
 
       const currentPrice = priceStore.getPrice(inst.token);

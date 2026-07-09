@@ -1,18 +1,20 @@
-import pg from "pg";
+import { createClient } from "@supabase/supabase-js";
 import "dotenv/config";
 
-const connectionString = process.env.DATABASE_URL!;
-const pool = new pg.Pool({
-  connectionString,
-  ssl: connectionString?.includes("supabase") ? { rejectUnauthorized: false } : undefined,
-});
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function main() {
   console.log("Starting database seed...");
 
   // 1. Clean existing instruments
   console.log("Cleaning up existing instruments...");
-  await pool.query('DELETE FROM "Instrument"');
+  const { error: deleteError } = await supabase
+    .from("Instrument")
+    .delete()
+    .neq("id", "");
+  if (deleteError) throw deleteError;
 
   // 2. Fetch scrip master JSON
   console.log("Fetching instrument master list from Angel One...");
@@ -42,6 +44,7 @@ async function main() {
     if (!seenTokens.has(item.token)) {
       seenTokens.add(item.token);
       instrumentsToInsert.push({
+        id: require("crypto").randomUUID(),
         token: item.token,
         symbol: item.symbol,
         name: item.name,
@@ -63,29 +66,10 @@ async function main() {
   for (let i = 0; i < instrumentsToInsert.length; i += batchSize) {
     const batch = instrumentsToInsert.slice(i, i + batchSize);
     
-    // Build batch insert query
-    const values: any[] = [];
-    const valuePlaceholders: string[] = [];
-    
-    batch.forEach((item, index) => {
-      const offset = index * 9;
-      const uuid = require("crypto").randomUUID();
-      valuePlaceholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`);
-      values.push(
-        uuid,
-        item.token,
-        item.symbol,
-        item.name,
-        item.expiry,
-        item.strike,
-        item.lotsize,
-        item.exchSeg,
-        item.tickSize
-      );
-    });
-
-    const queryText = `INSERT INTO "Instrument" (id, token, symbol, name, expiry, strike, lotsize, "exchSeg", "tickSize") VALUES ${valuePlaceholders.join(", ")}`;
-    await pool.query(queryText, values);
+    const { error: insertError } = await supabase
+      .from("Instrument")
+      .insert(batch);
+    if (insertError) throw insertError;
 
     const progress = Math.min(i + batchSize, instrumentsToInsert.length);
     console.log(`Seeded ${progress}/${instrumentsToInsert.length} instruments...`);
@@ -98,5 +82,4 @@ main()
   .catch((e) => {
     console.error("Error seeding database:", e);
     process.exit(1);
-  })
-  .finally(() => pool.end());
+  });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { priceStore } from "@/lib/priceStore";
 
 export const dynamic = "force-dynamic";
@@ -14,18 +14,23 @@ export async function GET(req: NextRequest) {
 
     const userId = user.userId;
 
-    // Fetch all required data in parallel
+    // Fetch all required data in parallel using Supabase
     const [userRes, ordersRes, holdingsRes, historyRes] = await Promise.all([
-      query('SELECT balance FROM "User" WHERE id = $1', [userId]),
-      query('SELECT * FROM "Order" WHERE "userId" = $1 ORDER BY "createdAt" DESC', [userId]),
-      query('SELECT * FROM "Holding" WHERE "userId" = $1', [userId]),
-      query('SELECT * FROM "PortfolioHistory" WHERE "userId" = $1 ORDER BY timestamp ASC', [userId]),
+      supabase.from("User").select("balance").eq("id", userId).limit(1),
+      supabase.from("Order").select("*").eq("userId", userId).order("createdAt", { ascending: false }),
+      supabase.from("Holding").select("*").eq("userId", userId),
+      supabase.from("PortfolioHistory").select("*").eq("userId", userId).order("timestamp", { ascending: true }),
     ]);
 
-    const dbUser = userRes.rows[0];
-    const orders = ordersRes.rows;
-    const holdings = holdingsRes.rows;
-    const history = historyRes.rows;
+    if (userRes.error) throw userRes.error;
+    if (ordersRes.error) throw ordersRes.error;
+    if (holdingsRes.error) throw holdingsRes.error;
+    if (historyRes.error) throw historyRes.error;
+
+    const dbUser = userRes.data?.[0];
+    const orders = ordersRes.data || [];
+    const holdings = holdingsRes.data || [];
+    const history = historyRes.data || [];
 
     if (!dbUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });

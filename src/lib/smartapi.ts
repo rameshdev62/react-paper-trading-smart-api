@@ -1,5 +1,5 @@
 import { generateSync } from "otplib";
-import { query } from "./db";
+import { supabase } from "./db";
 import { priceStore } from "./priceStore";
 
 interface LoginResponse {
@@ -98,11 +98,13 @@ export async function startLiveFeed(userId: string) {
 
     // 4. Fetch the tokens we want to subscribe to (Watchlist & Holdings)
     const [watchlistRes, holdingsRes] = await Promise.all([
-      query('SELECT token FROM "Watchlist" WHERE "userId" = $1', [userId]),
-      query('SELECT token FROM "Holding" WHERE "userId" = $1', [userId]),
+      supabase.from("Watchlist").select("token").eq("userId", userId),
+      supabase.from("Holding").select("token").eq("userId", userId),
     ]);
-    const watchlist = watchlistRes.rows;
-    const holdings = holdingsRes.rows;
+    if (watchlistRes.error) throw watchlistRes.error;
+    if (holdingsRes.error) throw holdingsRes.error;
+    const watchlist = watchlistRes.data || [];
+    const holdings = holdingsRes.data || [];
 
     const subscriptionTokens = Array.from(
       new Set([
