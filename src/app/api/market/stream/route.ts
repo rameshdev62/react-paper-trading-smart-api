@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { priceStore } from "@/lib/priceStore";
 import { getAuthUser } from "@/lib/auth";
 import { getRequestClient } from "@/lib/db";
+import { startLiveFeed, stopLiveFeed } from "@/lib/shoonya";
 
 export const dynamic = "force-dynamic";
 
@@ -46,12 +47,22 @@ export async function GET(req: NextRequest) {
 
   if (mode === "mock") {
     priceStore.startMockSimulation();
-    const { stopLiveFeed } = require("@/lib/smartapi");
     stopLiveFeed();
   } else if (mode === "live") {
     priceStore.stopMockSimulation();
-    const { startLiveFeed } = require("@/lib/smartapi");
-    startLiveFeed(user.userId).catch((err: any) => {
+    const { cookies } = require("next/headers");
+    let shoonyaSession: any = undefined;
+    try {
+      const cookieStore = await cookies();
+      const cookieVal = cookieStore.get("shoonya_session")?.value;
+      if (cookieVal) {
+        shoonyaSession = JSON.parse(cookieVal);
+      }
+    } catch (cookieErr) {
+      console.error("[Market Stream API] Error reading shoonya session cookie:", cookieErr);
+    }
+
+    startLiveFeed(user.userId, shoonyaSession).catch((err: any) => {
       console.error("[Market Stream API] Failed to start live feed:", err);
     });
   }

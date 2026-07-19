@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { Trash2, TrendingUp, TrendingDown, Plus, X, Check, Pencil, LineChart } from "lucide-react";
+import { Trash2, TrendingUp, TrendingDown, Plus, X, Check, Pencil, LineChart, RefreshCw } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { toTradingViewSymbol } from "./TradingViewChart";
 
@@ -13,7 +13,7 @@ interface WatchlistProps {
 }
 
 export const Watchlist: React.FC<WatchlistProps> = ({ onSelectInstrument, selectedToken, activeGroup: externalGroup, onGroupChange }) => {
-  const { watchlist, groups, prices, removeFromWatchlist, createGroup, renameGroup, deleteGroup } = useApp();
+  const { watchlist, groups, prices, appMode, removeFromWatchlist, createGroup, renameGroup, deleteGroup, refreshWatchlist, refreshingWatchlist, refreshWatchlistLtp, refreshingWatchlistLtp } = useApp();
   const [internalGroup, setInternalGroup] = useState<string>("Default");
   const activeGroup = externalGroup ?? internalGroup;
   const setActiveGroup = (g: string) => {
@@ -108,6 +108,25 @@ export const Watchlist: React.FC<WatchlistProps> = ({ onSelectInstrument, select
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col shadow-lg">
+      <div className="flex justify-between items-center mb-3">
+        <div>
+          <h3 className="font-extrabold text-sm text-slate-200 uppercase tracking-wider">Watchlist</h3>
+          <p className="text-[10px] text-slate-500 mt-0.5">Monitor your favorite stocks</p>
+        </div>
+        <button
+          onClick={() => refreshWatchlistLtp()}
+          disabled={refreshingWatchlist || refreshingWatchlistLtp}
+          className={`p-1.5 rounded-lg border transition-all cursor-pointer disabled:opacity-50 ${
+            appMode === "live"
+              ? "border-emerald-500/30 hover:border-emerald-500/50 text-emerald-400 hover:text-emerald-300"
+              : "border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200"
+          }`}
+          title={appMode === "live" ? "Refresh LTP from Shoonya API" : "Refresh Watchlist"}
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${(refreshingWatchlist || refreshingWatchlistLtp) ? "animate-spin text-emerald-400" : ""}`} />
+        </button>
+      </div>
+
       {/* Tab bar */}
       <div className="flex items-center gap-1 border-b border-slate-800 pb-2 mb-3 overflow-x-auto scrollbar-thin">
         {groups.map((g) => (

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { getRequestClient } from "@/lib/db";
+import { startLiveFeed } from "@/lib/shoonya";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,6 @@ export async function DELETE(req: NextRequest) {
     if (error) throw error;
 
     if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
-      const { startLiveFeed } = require("@/lib/smartapi");
       startLiveFeed(user.userId).catch((err: any) => {
         console.error("[Watchlist API] Failed to update live feed:", err);
       });

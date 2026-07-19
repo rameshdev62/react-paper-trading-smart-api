@@ -90,16 +90,19 @@ export async function placeOrder(params: {
       if (existingHolding) {
         const newQty = existingHolding.quantity + quantity;
         const newAvgPrice = (existingHolding.averagePrice * existingHolding.quantity + price * quantity) / newQty;
+        const now = new Date().toISOString();
         const { error: updateHoldingError } = await supabase
           .from("Holding")
           .update({
             quantity: newQty,
             averagePrice: parseFloat(newAvgPrice.toFixed(2)),
+            updatedAt: now,
           })
           .eq("id", existingHolding.id);
         if (updateHoldingError) throw updateHoldingError;
       } else {
         const holdingId = require("crypto").randomUUID();
+        const now = new Date().toISOString();
         const { error: insertHoldingError } = await supabase
           .from("Holding")
           .insert({
@@ -110,6 +113,7 @@ export async function placeOrder(params: {
             exchange,
             quantity,
             averagePrice: price,
+            updatedAt: now,
           });
         if (insertHoldingError) throw insertHoldingError;
       }
@@ -210,7 +214,10 @@ export async function placeOrder(params: {
       } else {
         const { error: updateHoldingError } = await supabase
           .from("Holding")
-          .update({ quantity: holding.quantity - quantity })
+          .update({
+            quantity: holding.quantity - quantity,
+            updatedAt: new Date().toISOString(),
+          })
           .eq("id", holding.id);
         if (updateHoldingError) throw updateHoldingError;
       }
@@ -355,16 +362,19 @@ async function executePendingOrder(orderId: string, fillPrice: number) {
       if (existingHolding) {
         const newQty = existingHolding.quantity + order.quantity;
         const newAvgPrice = (existingHolding.averagePrice * existingHolding.quantity + fillPrice * order.quantity) / newQty;
+        const now = new Date().toISOString();
         const { error: updateHoldingError } = await supabase
           .from("Holding")
           .update({
             quantity: newQty,
             averagePrice: parseFloat(newAvgPrice.toFixed(2)),
+            updatedAt: now,
           })
           .eq("id", existingHolding.id);
         if (updateHoldingError) throw updateHoldingError;
       } else {
         const holdingId = require("crypto").randomUUID();
+        const now = new Date().toISOString();
         const { error: insertHoldingError } = await supabase
           .from("Holding")
           .insert({
@@ -375,6 +385,7 @@ async function executePendingOrder(orderId: string, fillPrice: number) {
             exchange: order.exchange,
             quantity: order.quantity,
             averagePrice: fillPrice,
+            updatedAt: now,
           });
         if (insertHoldingError) throw insertHoldingError;
       }
@@ -432,7 +443,10 @@ async function executePendingOrder(orderId: string, fillPrice: number) {
       } else {
         const { error: updateHoldingError } = await supabase
           .from("Holding")
-          .update({ quantity: holding.quantity - order.quantity })
+          .update({
+            quantity: holding.quantity - order.quantity,
+            updatedAt: new Date().toISOString(),
+          })
           .eq("id", holding.id);
         if (updateHoldingError) throw updateHoldingError;
       }

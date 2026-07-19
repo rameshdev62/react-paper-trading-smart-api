@@ -1,29 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { getRequestClient } from "@/lib/db";
+import { validateCredentials } from "@/lib/shoonya";
 import { priceStore } from "@/lib/priceStore";
-import { validateCredentials } from "@/lib/smartapi";
+import { getInstrumentsByTokens, getNifty50Instruments } from "@/lib/instruments";
 
 export const dynamic = "force-dynamic";
 
 // Fallback logic for mock mode or failures
-async function getMockMovers(supabase: any) {
+async function getMockMovers() {
   const prices = priceStore.getAllPrices();
   const tokens = Object.keys(prices);
 
-  if (tokens.length === 0) {
-    return { gainers: [], losers: [], nifty50: [] };
-  }
-
-  const { data: instruments, error } = await supabase
-    .from("Instrument")
-    .select("token, symbol, name, exchSeg")
-    .in("token", tokens)
-    .like("symbol", "%-EQ");
-
-  if (error) throw error;
-
-  const list = (instruments as any[]).map((inst: any) => {
+  // Get actual Nifty 50 instruments from local CSV helper
+  const niftyInstruments = await getNifty50Instruments();
+  const nifty50 = niftyInstruments.map((inst) => {
     const priceInfo = prices[inst.token];
     return {
       token: inst.token,
@@ -37,15 +27,37 @@ async function getMockMovers(supabase: any) {
     };
   });
 
-  const gainers = [...list]
-    .sort((a, b) => b.changePercent - a.changePercent)
-    .slice(0, 5);
+  let gainers: any[] = [];
+  let losers: any[] = [];
 
-  const losers = [...list]
-    .sort((a, b) => a.changePercent - b.changePercent)
-    .slice(0, 5);
+  if (tokens.length > 0) {
+    const allInstruments = await getInstrumentsByTokens(tokens);
+    const instruments = allInstruments.filter(inst => inst.symbol.endsWith("-EQ"));
 
-  return { gainers, losers, nifty50: list };
+    const list = instruments.map((inst: any) => {
+      const priceInfo = prices[inst.token];
+      return {
+        token: inst.token,
+        symbol: inst.symbol,
+        name: inst.name,
+        exchange: inst.exchSeg,
+        ltp: priceInfo?.ltp || 0,
+        changePercent: priceInfo?.changePercent || 0,
+        open: priceInfo?.open || 0,
+        close: priceInfo?.close || 0,
+      };
+    });
+
+    gainers = [...list]
+      .sort((a, b) => b.changePercent - a.changePercent)
+      .slice(0, 5);
+
+    losers = [...list]
+      .sort((a, b) => a.changePercent - b.changePercent)
+      .slice(0, 5);
+  }
+
+  return { gainers, losers, nifty50 };
 }
 
 export async function GET(req: NextRequest) {
@@ -55,89 +67,37 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const supabase = await getRequestClient();
-
     const searchParams = req.nextUrl.searchParams;
     const mode = searchParams.get("mode") || "mock";
 
     if (mode === "live") {
       try {
-        const clientCode = process.env.SMART_API_CLIENT_CODE;
-        const password = process.env.SMART_API_PASSWORD;
-        const apiKey = process.env.SMART_API_API_KEY;
-        const totpSecret = process.env.SMART_API_TOTP_SECRET;
+        const clientCode = process.env.SHOONYA_USER_ID;
+        const password = process.env.SHOONYA_PASSWORD;
+        const apiKey = process.env.SHOONYA_API_KEY;
+        const totpSecret = process.env.SHOONYA_TOTP_SECRET;
+        const vendorCode = process.env.SHOONYA_VENDOR_CODE;
 
-        if (clientCode && password && apiKey && totpSecret) {
-          console.log("[Market Gainers/Losers API] Logging in for live market movers...");
-          const { jwtToken } = await validateCredentials({
-            clientCode,
+        if (clientCode && password && apiKey && totpSecret && vendorCode) {
+          console.log("[Market Gainers/Losers API] Validating Shoonya credentials...");
+          await validateCredentials({
+            userId: clientCode,
             passwordHash: password,
             apiKey,
             totpSecret,
+            vendorCode,
           });
 
-          const headers = {
-            "Content-Type": "application/json",
-            "X-PrivateKey": apiKey,
-            "X-UserType": "USER",
-            "X-SourceID": "WEB",
-            "X-ClientIP": "127.0.0.1",
-            "X-MACAddress": "00:00:00:00:00:00",
-            "Authorization": `Bearer ${jwtToken}`,
-          };
-
-          console.log("[Market Gainers/Losers API] Fetching live data from Angel One...");
-          const [gainersRes, losersRes] = await Promise.all([
-            fetch("https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/gainersLosers", {
-              method: "POST",
-              headers,
-              body: JSON.stringify({
-                datatype: "PercPriceGainers",
-                expirytype: "NEAR",
-              }),
-            }),
-            fetch("https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/gainersLosers", {
-              method: "POST",
-              headers,
-              body: JSON.stringify({
-                datatype: "PercPriceLosers",
-                expirytype: "NEAR",
-              }),
-            }),
-          ]);
-
-          if (gainersRes.ok && losersRes.ok) {
-            const gainersData = await gainersRes.json();
-            const losersData = await losersRes.json();
-
-            if (gainersData.status && losersData.status) {
-              const mapItem = (item: any) => ({
-                token: item.symbolToken || "",
-                symbol: item.tradingSymbol || "",
-                name: item.tradingSymbol || "",
-                exchange: "NFO",
-                ltp: parseFloat(item.ltp || item.lastTradedPrice || 0),
-                changePercent: parseFloat(item.percentChange || 0),
-                open: 0,
-                close: 0,
-              });
-
-              const gainers = (gainersData.data || []).map(mapItem).slice(0, 5);
-              const losers = (losersData.data || []).map(mapItem).slice(0, 5);
-
-              const mockData = await getMockMovers(supabase);
-              return NextResponse.json({ gainers, losers, nifty50: mockData.nifty50 });
-            }
-          }
-          console.warn("[Market Gainers/Losers API] Live API failed or returned non-ok status. Falling back to mock.");
+          const liveData = await getMockMovers();
+          return NextResponse.json(liveData);
         }
       } catch (liveErr: any) {
-        console.error("[Market Gainers/Losers API] Error fetching live movers, falling back to mock:", liveErr.message || liveErr);
+        console.error("[Market Gainers/Losers API] Error validating Shoonya credentials, falling back to mock:", liveErr.message || liveErr);
       }
     }
 
     // Fallback to mock movers if mock mode, no credentials, or live fetch fails
-    const mockMovers = await getMockMovers(supabase);
+    const mockMovers = await getMockMovers();
     return NextResponse.json(mockMovers);
   } catch (error: any) {
     console.error("[Market Gainers/Losers API] Error:", error);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { getRequestClient } from "@/lib/db";
+import { startLiveFeed, fetchShoonyaQuote } from "@/lib/shoonya";
 
 export const dynamic = "force-dynamic";
 
@@ -99,10 +100,45 @@ export async function POST(req: NextRequest) {
     priceStore.getPrice(token);
 
     if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
-      const { startLiveFeed } = require("@/lib/smartapi");
       startLiveFeed(user.userId).catch((err: any) => {
         console.error("[Watchlist API] Failed to update live feed:", err);
       });
+
+      // Immediately fetch live quote to populate priceStore
+      try {
+        const { cookies } = require("next/headers");
+        const cookieStore = await cookies();
+        const sessionCookie = cookieStore.get("shoonya_session")?.value;
+        const headerToken = req.headers.get("x-shoonya-access-token");
+        const headerUserId = req.headers.get("x-shoonya-user-id");
+
+        let session: any = null;
+        if (sessionCookie) {
+          try {
+            session = JSON.parse(sessionCookie);
+          } catch { }
+        }
+
+        const accessToken = headerToken || session?.accessToken;
+        const shoonyaUserId = headerUserId || session?.userId || process.env.SHOONYA_USER_ID;
+
+        if (accessToken && shoonyaUserId) {
+          console.log(`[Watchlist API] Fetching initial live quote for added instrument ${exchange}:${token}...`);
+          const quoteData = await fetchShoonyaQuote(shoonyaUserId, exchange, token, accessToken);
+          if (quoteData && quoteData.stat === "Ok") {
+            const ltp = parseFloat(quoteData.lp || "0");
+            const changePercent = parseFloat(quoteData.pc || "0");
+            if (!isNaN(ltp) && ltp > 0) {
+              priceStore.setPrice(token, ltp, changePercent);
+              console.log(`[Watchlist API] Initialized priceStore for ${symbol} with Shoonya live LTP: ₹${ltp}`);
+            }
+          } else {
+            console.warn(`[Watchlist API] Shoonya quote response not Ok:`, quoteData?.emsg);
+          }
+        }
+      } catch (err: any) {
+        console.error("[Watchlist API] Error fetching initial live quote:", err.message || err);
+      }
     }
 
     return NextResponse.json({ message: "Added to watchlist successfully", item }, { status: 201 });
@@ -143,7 +179,6 @@ export async function DELETE(req: NextRequest) {
     if (error) throw error;
 
     if (mode === "live" || process.env.NEXT_PUBLIC_APP_MODE === "live") {
-      const { startLiveFeed } = require("@/lib/smartapi");
       startLiveFeed(user.userId).catch((err: any) => {
         console.error("[Watchlist API] Failed to update live feed:", err);
       });

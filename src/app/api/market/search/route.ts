@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRequestClient } from "@/lib/db";
+import { searchInstruments } from "@/lib/instruments";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    const supabase = await getRequestClient();
     const searchParams = req.nextUrl.searchParams;
     const queryStr = searchParams.get("query") || "";
 
@@ -13,14 +12,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json([]);
     }
 
-    // Query our cached Instrument Master table
-    const { data: instruments, error } = await supabase
-      .from("Instrument")
-      .select("*")
-      .or(`symbol.ilike.%${queryStr}%,name.ilike.%${queryStr}%`)
-      .limit(10);
-
-    if (error) throw error;
+    // Query our local CSV helper
+    const instruments = await searchInstruments(queryStr, 10);
 
     return NextResponse.json(instruments);
   } catch (error: any) {

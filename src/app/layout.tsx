@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Smart Paper Trading | Angel One SmartAPI Integration",
-  description: "Real-time stock market simulation dashboard powered by Angel One SmartAPI live feeds and transactional order logs.",
+  title: "Smart Paper Trading | Finvasia Shoonya API Integration",
+  description: "Real-time stock market simulation dashboard powered by Finvasia Shoonya API live feeds and transactional order logs.",
 };
 
 export default function RootLayout({

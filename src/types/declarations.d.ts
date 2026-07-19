@@ -1,1 +1,1 @@
-declare module "smartapi-javascript";
+// Empty declarations file

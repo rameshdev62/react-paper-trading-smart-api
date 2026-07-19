@@ -55,7 +55,7 @@ export default function DashboardPage() {
       {/* Header Navigation bar */}
       <Navbar />
 
-      <main className="flex-1 p-6 flex flex-col lg:flex-row gap-6 max-w-7xl w-full mx-auto">
+      <main className="flex-1 p-6 flex flex-col lg:flex-row gap-6 w-full mx-auto">
         {/* Left Side: Market Watch & Execution */}
         <div className="w-full lg:w-[350px] shrink-0 flex flex-col gap-6">
           <div className="flex flex-col gap-2">
@@ -85,8 +85,8 @@ export default function DashboardPage() {
               <button
                 onClick={() => setActiveTab("overview")}
                 className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${activeTab === "overview"
-                    ? "border-emerald-500 text-emerald-400"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
                   }`}
               >
                 <BarChart3 className="w-4 h-4" />
@@ -96,8 +96,8 @@ export default function DashboardPage() {
               <button
                 onClick={() => setActiveTab("analytics")}
                 className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${activeTab === "analytics"
-                    ? "border-emerald-500 text-emerald-400"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
                   }`}
               >
                 <PieChart className="w-4 h-4" />

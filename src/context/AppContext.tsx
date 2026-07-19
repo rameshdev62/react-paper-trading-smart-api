@@ -79,6 +79,14 @@ interface AppContextType {
   loading: boolean;
   appMode: "mock" | "live";
   setAppMode: (mode: "mock" | "live") => void;
+  shoonyaSession: {
+    accessToken: string;
+    userId: string;
+    accountId: string;
+    susertoken: string;
+  } | null;
+  loginToShoonya: (authCode?: string, secretCode?: string, clientId?: string, userId?: string, auto?: boolean) => Promise<void>;
+  disconnectShoonya: () => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   addToWatchlist: (symbol: string, token: string, exchange: string, group?: string) => Promise<void>;
@@ -97,8 +105,12 @@ interface AppContextType {
     productType: "INTRADAY" | "DELIVERY";
   }) => Promise<void>;
   cancelOrder: (orderId: string) => Promise<void>;
+  refreshWatchlist: () => Promise<void>;
+  refreshWatchlistLtp: () => Promise<void>;
+  refreshingWatchlistLtp: boolean;
   refreshPortfolio: () => Promise<void>;
   refreshOrders: () => Promise<void>;
+  refreshingWatchlist: boolean;
   refreshingPortfolio: boolean;
   refreshingOrders: boolean;
 }
@@ -117,6 +129,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [portfolioSummary, setPortfolioSummary] = useState<AppContextType["portfolioSummary"]>(null);
   const [loading, setLoading] = useState(true);
   const [appMode, setAppMode] = useState<"mock" | "live">("mock");
+  const [shoonyaSession, setShoonyaSession] = useState<AppContextType["shoonyaSession"]>(null);
+  const [refreshingWatchlist, setRefreshingWatchlist] = useState(false);
   const [refreshingPortfolio, setRefreshingPortfolio] = useState(false);
   const [refreshingOrders, setRefreshingOrders] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -124,10 +138,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Effects are declared below helper functions to avoid lint immutability issues
 
   const getHeaders = () => {
-    return {
+    const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     };
+    if (appMode === "live" && shoonyaSession) {
+      headers["x-shoonya-access-token"] = shoonyaSession.accessToken;
+      headers["x-shoonya-user-id"] = shoonyaSession.userId;
+      headers["x-shoonya-account-id"] = shoonyaSession.accountId;
+    }
+    return headers;
   };
 
   const login = async (email: string, password: string) => {
@@ -162,17 +182,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    localStorage.removeItem("shoonya_session");
     setToken(null);
     setUser(null);
+    setShoonyaSession(null);
+    setAppMode("mock");
+    document.cookie = "shoonya_session=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;";
     router.push("/login");
   };
 
+  const loginToShoonya = async (authCode?: string, secretCode?: string, clientId?: string, userId?: string, auto?: boolean) => {
+    const res = await fetch("/api/shoonya/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto, authCode, secretCode, clientId, userId }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to authenticate with Shoonya");
+    }
+
+    if (data.session) {
+      setShoonyaSession(data.session);
+      localStorage.setItem("shoonya_session", JSON.stringify(data.session));
+      localStorage.setItem("appMode", "live");
+      setAppMode("live");
+      router.refresh();
+    }
+  };
+
+  const disconnectShoonya = () => {
+    setShoonyaSession(null);
+    localStorage.removeItem("shoonya_session");
+    localStorage.setItem("appMode", "mock");
+    setAppMode("mock");
+    document.cookie = "shoonya_session=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+    router.refresh();
+  };
+
   const fetchWatchlist = async () => {
+    setRefreshingWatchlist(true);
     try {
       const [watchlistRes, groupsRes] = await Promise.all([
-        fetch("/api/watchlist", { headers: getHeaders() }),
-        fetch("/api/watchlist?groups=true", { headers: getHeaders() }),
+        fetch(`/api/watchlist?mode=${appMode}`, { headers: getHeaders() }),
+        fetch(`/api/watchlist?groups=true&mode=${appMode}`, { headers: getHeaders() }),
       ]);
+      if (watchlistRes.status === 401 || groupsRes.status === 401) {
+        if (appMode === "live") {
+          console.warn("[AppContext] Shoonya session expired or unauthorized on fetchWatchlist, disconnecting...");
+          disconnectShoonya();
+          return;
+        }
+      }
       if (watchlistRes.ok) {
         setWatchlist(await watchlistRes.json());
       }
@@ -181,13 +243,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch (err) {
       console.error("Fetch watchlist error:", err);
+    } finally {
+      setRefreshingWatchlist(false);
+    }
+  };
+
+  const [refreshingWatchlistLtp, setRefreshingWatchlistLtp] = useState(false);
+
+  const refreshWatchlistLtp = async () => {
+    if (appMode !== "live" || !shoonyaSession) {
+      // In mock mode, just re-fetch watchlist data (no Shoonya call)
+      await fetchWatchlist();
+      return;
+    }
+    setRefreshingWatchlistLtp(true);
+    try {
+      // Fetch current watchlist items from state
+      const items = watchlist.filter((w) => w.token && w.exchange);
+      if (items.length === 0) return;
+
+      console.log(`[Watchlist LTP Refresh] Fetching LTPs for ${items.length} items via Shoonya GetQuotes...`);
+
+      await Promise.allSettled(
+        items.map(async (item) => {
+          try {
+            const res = await fetch(
+              `/api/market/quote?exchange=${item.exchange}&token=${item.token}`,
+              { headers: getHeaders() }
+            );
+            if (res.ok) {
+              const data = await res.json();
+              console.log(`[Watchlist LTP Refresh] ${item.symbol} (${item.exchange}:${item.token}) LTP: ₹${data.ltp}`);
+            } else {
+              const err = await res.json();
+              console.warn(`[Watchlist LTP Refresh] ${item.symbol}: ${err.error}`);
+            }
+          } catch (e: any) {
+            console.warn(`[Watchlist LTP Refresh] ${item.symbol} failed:`, e.message);
+          }
+        })
+      );
+    } finally {
+      setRefreshingWatchlistLtp(false);
     }
   };
 
   const fetchPortfolio = async () => {
     setRefreshingPortfolio(true);
     try {
-      const res = await fetch("/api/portfolio", { headers: getHeaders() });
+      const res = await fetch(`/api/portfolio?mode=${appMode}`, { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
         setHoldings(data.holdings);
@@ -206,6 +310,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setUser(updatedUser);
           localStorage.setItem("user", JSON.stringify(updatedUser));
         }
+      } else if (res.status === 401 && appMode === "live") {
+        console.warn("[AppContext] Shoonya session expired or unauthorized on fetchPortfolio, disconnecting...");
+        disconnectShoonya();
       }
     } catch (err) {
       console.error("Fetch portfolio error:", err);
@@ -217,10 +324,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const fetchOrders = async () => {
     setRefreshingOrders(true);
     try {
-      const res = await fetch("/api/orders", { headers: getHeaders() });
+      const res = await fetch(`/api/orders?mode=${appMode}`, { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
         setOrders(data);
+      } else if (res.status === 401 && appMode === "live") {
+        console.warn("[AppContext] Shoonya session expired or unauthorized on fetchOrders, disconnecting...");
+        disconnectShoonya();
       }
     } catch (err) {
       console.error("Fetch orders error:", err);
@@ -342,6 +452,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const storedToken = localStorage.getItem("token");
     const storedUser = localStorage.getItem("user");
     const storedMode = localStorage.getItem("appMode") as "mock" | "live";
+    const storedShoonya = localStorage.getItem("shoonya_session");
 
     // Defer state updates to avoid synchronous setState inside useEffect
     setTimeout(() => {
@@ -351,6 +462,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (storedMode) {
         setAppMode(storedMode);
+      }
+      if (storedShoonya) {
+        try {
+          setShoonyaSession(JSON.parse(storedShoonya));
+        } catch {}
       }
       setLoading(false);
     }, 0);
@@ -371,7 +487,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setPortfolioSummary(null);
       }, 0);
     }
-  }, [token]);
+  }, [token, appMode]);
 
   // Connect to Real-time price feed via SSE
   useEffect(() => {
@@ -427,6 +543,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         loading,
         appMode,
         setAppMode: handleSetMode,
+        shoonyaSession,
+        loginToShoonya,
+        disconnectShoonya,
         login,
         logout,
         addToWatchlist,
@@ -436,8 +555,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteGroup,
         submitOrder,
         cancelOrder,
+        refreshWatchlist: fetchWatchlist,
+        refreshWatchlistLtp,
         refreshPortfolio: fetchPortfolio,
         refreshOrders: fetchOrders,
+        refreshingWatchlist,
+        refreshingWatchlistLtp,
         refreshingPortfolio,
         refreshingOrders,
       }}

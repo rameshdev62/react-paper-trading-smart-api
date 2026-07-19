@@ -2,8 +2,31 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { getRequestClient } from "@/lib/db";
 import { placeOrder } from "@/lib/engine";
+import { cookies } from "next/headers";
+import { fetchShoonyaOrders } from "@/lib/shoonya";
 
 export const dynamic = "force-dynamic";
+
+function parseNorenTime(nortime: string): string {
+  if (!nortime) return new Date().toISOString();
+  try {
+    // Format: "HH:MM:SS DD-MM-YYYY"
+    const [timePart, datePart] = nortime.split(" ");
+    const [hours, minutes, seconds] = timePart.split(":");
+    const [day, month, year] = datePart.split("-");
+    const dateObj = new Date(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      parseInt(hours),
+      parseInt(minutes),
+      parseInt(seconds)
+    );
+    return dateObj.toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+}
 
 // GET /api/orders: Fetch all orders for the authenticated user
 export async function GET(req: NextRequest) {
